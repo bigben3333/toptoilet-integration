@@ -10,7 +10,7 @@ Cette intégration permet de contrôler votre WC Japonais Monobloc Luxe DIAMOND 
 
 - Home Assistant avec support Bluetooth
 - Un adaptateur Bluetooth compatible sur votre serveur Home Assistant
-- Un bidet Wings/Jitian compatible (modèle avec connectivité Bluetooth)
+- Un bidet Wings/Jitian compatible (modèle avec connectivité Bluetooth, apparaît sous le nom "HMsoft" dans la liste des appareils Bluetooth)
 
 ## Installation
 
@@ -27,7 +27,7 @@ Cette intégration permet de contrôler votre WC Japonais Monobloc Luxe DIAMOND 
 
 1. Assurez-vous que [HACS](https://hacs.xyz/) est installé.
 2. Allez dans HACS → Intégrations → ⋮ → Dépôts personnalisés
-3. Ajoutez l'URL du dépôt : `https://github.com/bigben3333/bidet-integration`
+3. Ajoutez l'URL du dépôt : `https://github.com/bigben3333/toptoilet-integration`
 4. Sélectionnez "Intégration" comme catégorie
 5. Cliquez sur "Ajouter"
 6. Recherchez "Top Toilet / Bidet WC" et installez-le
