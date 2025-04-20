@@ -157,47 +157,47 @@ class BidetCoordinator:
             # Méthode exacte utilisée par l'app
             await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", full_cmd)
             
-        # L'app attend ensuite une notification de retour, mais c'est géré par le handler
-        # On attendra donc un moment pour voir si une notification arrive
-        _LOGGER.info("⚡ 5) ATTENTE de notification retour (comme dans l'app)...")
-        await asyncio.sleep(0.5)  # Attendre la notification d'authentification
-        
-        # ÉTAPE ADDITIONNELLE CRITIQUE: Répondre à l'authentification
-        if self.last_notification_data:
-            _LOGGER.info("🔐 Notification reçue durant la commande: %s", self.last_notification_data)
-            _LOGGER.info("🔐 Tentative de réponse d'authentification basée sur les données reçues")
+            # L'app attend ensuite une notification de retour, mais c'est géré par le handler
+            # On attendra donc un moment pour voir si une notification arrive
+            _LOGGER.info("⚡ 5) ATTENTE de notification retour (comme dans l'app)...")
+            await asyncio.sleep(0.5)  # Attendre la notification d'authentification
             
-            # Données de la notification reçue (probablement un challenge d'authentification)
-            auth_challenge = bytes.fromhex(self.last_notification_data)
-            
-            # Construire une réponse d'authentification
-            # Plusieurs approches possibles:
-            auth_responses = []
-            
-            if len(auth_challenge) >= 6:
-                # 1. Format avec écho exact des 6 premiers bytes + commande
-                resp1 = auth_challenge[:6] + bytes.fromhex("7b01")
-                auth_responses.append(resp1)
+            # ÉTAPE ADDITIONNELLE CRITIQUE: Répondre à l'authentification
+            if self.last_notification_data:
+                _LOGGER.info("🔐 Notification reçue durant la commande: %s", self.last_notification_data)
+                _LOGGER.info("🔐 Tentative de réponse d'authentification basée sur les données reçues")
                 
-                # 2. Format avec premier byte inversé (trouvé dans certains protocoles IoT)
-                resp2 = bytes([auth_challenge[0] ^ 0xFF]) + auth_challenge[1:6] + bytes.fromhex("7b01")
-                auth_responses.append(resp2)
+                # Données de la notification reçue (probablement un challenge d'authentification)
+                auth_challenge = bytes.fromhex(self.last_notification_data)
                 
-                # 3. Format avec inversion complète des 6 premiers bytes
-                resp3 = bytes([b ^ 0xFF for b in auth_challenge[:6]]) + bytes.fromhex("7b01") 
-                auth_responses.append(resp3)
-            
-            # Essayer chaque format de réponse possible
-            for i, auth_resp in enumerate(auth_responses):
-                try:
-                    _LOGGER.info("🔐 Essai de réponse d'authentification #%d: %s", i+1, auth_resp.hex())
-                    await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", auth_resp)
-                    await asyncio.sleep(0.5)  # Attendre entre les commandes
-                except Exception as err:
-                    _LOGGER.warning("🔐 Échec de la réponse d'authentification #%d: %s", i+1, err)
+                # Construire une réponse d'authentification
+                # Plusieurs approches possibles:
+                auth_responses = []
+                
+                if len(auth_challenge) >= 6:
+                    # 1. Format avec écho exact des 6 premiers bytes + commande
+                    resp1 = auth_challenge[:6] + bytes.fromhex("7b01")
+                    auth_responses.append(resp1)
                     
-        # Attendre un moment pour s'assurer que le bidet a bien reçu et traité la commande
-        await asyncio.sleep(0.5)
+                    # 2. Format avec premier byte inversé (trouvé dans certains protocoles IoT)
+                    resp2 = bytes([auth_challenge[0] ^ 0xFF]) + auth_challenge[1:6] + bytes.fromhex("7b01")
+                    auth_responses.append(resp2)
+                    
+                    # 3. Format avec inversion complète des 6 premiers bytes
+                    resp3 = bytes([b ^ 0xFF for b in auth_challenge[:6]]) + bytes.fromhex("7b01") 
+                    auth_responses.append(resp3)
+                
+                # Essayer chaque format de réponse possible
+                for i, auth_resp in enumerate(auth_responses):
+                    try:
+                        _LOGGER.info("🔐 Essai de réponse d'authentification #%d: %s", i+1, auth_resp.hex())
+                        await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", auth_resp)
+                        await asyncio.sleep(0.5)  # Attendre entre les commandes
+                    except Exception as err:
+                        _LOGGER.warning("🔐 Échec de la réponse d'authentification #%d: %s", i+1, err)
+                        
+            # Attendre un moment pour s'assurer que le bidet a bien reçu et traité la commande
+            await asyncio.sleep(0.5)
             
             # L'application renvoie TRUE à ce moment car elle considère l'envoi réussi
             # (indépendamment de si la chasse d'eau s'active, car cela sera confirmé par une notif)
