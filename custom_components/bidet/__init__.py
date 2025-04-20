@@ -111,6 +111,10 @@ class BidetCoordinator:
         
         # Ces commandes ont été extraites directement de l'application:
         app_commands = [
+            # Version modifiée avec 7B directement
+            b'\x55\xaa\x00\x01\x00\x7b\x01\xd1',
+            # Commande plus simple avec juste action et valeur
+            b'\x7b\x01',
             # Commande dans l'ancien format pour la chasse d'eau
             b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1',
             # Commande dans le nouveau format pour la chasse d'eau
@@ -122,6 +126,18 @@ class BidetCoordinator:
         try:
             # D'après l'analyse de l'application Android, elle essaie différentes caractéristiques:
             # Essayons d'abord FFE1 (ancienne) puis FFF1 (nouvelle)
+            # Pour aider au débogage, imprimons toutes les caractéristiques disponibles
+            _LOGGER.info("🔍 LISTE COMPLÈTE DES SERVICES ET CARACTÉRISTIQUES:")
+            try:
+                services = self.client.services
+                for service in services:
+                    _LOGGER.info("🔍 Service: %s", service.uuid)
+                    for char in service.characteristics:
+                        props = char.properties
+                        _LOGGER.info("🔍   Caractéristique: %s, Props: %s", char.uuid, props)
+            except Exception as err:
+                _LOGGER.warning("🔍 Impossible de lister les services: %s", err)
+            
             for uuid in [OLD_CHARACTERISTIC_UUID, CHARACTERISTIC_UUID]:
                 _LOGGER.info("Tentative avec la caractéristique %s", uuid)
                 for command in app_commands:

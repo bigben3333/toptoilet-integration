@@ -38,6 +38,8 @@ class BidetFlushButton(ButtonEntity):
         """Initialiser le bouton."""
         self.coordinator = coordinator
         self._entry = entry
+        self._counter = 0  # Compteur pour alterner les commandes
+        self.hass = coordinator.hass  # Accès à hass pour les notifications
         
         # L'ID unique de l'entité
         self._attr_unique_id = f"{entry.entry_id}_flush"
@@ -55,10 +57,41 @@ class BidetFlushButton(ButtonEntity):
     
     async def async_press(self) -> None:
         """Gérer l'appui sur le bouton."""
-        _LOGGER.info("👆 Bouton de chasse d'eau pressé - envoi de la commande %s:%s", CMD_FLUSH, VAL_FLUSH_ON)
+        # Utiliser une commande différente à chaque pression
+        self._counter = (self._counter + 1) % 5
+        
         try:
-            result = await self.coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
-            _LOGGER.info("👆 Résultat de l'envoi de commande: %s", "Succès" if result else "Échec")
+            if self._counter == 0:
+                # 1. Commande standard avec send_command
+                _LOGGER.info("👆 TEST #1: Commande standard via send_command")
+                result = await self.coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
+            elif self._counter == 1:
+                # 2. Commande directe simplifiée
+                _LOGGER.info("👆 TEST #2: Commande simplifiée (7b 01)")
+                result = await self.coordinator.send_raw_command(b'\x7b\x01')
+            elif self._counter == 2:
+                # 3. Commande avec format ancien
+                _LOGGER.info("👆 TEST #3: Ancien format (55aa00010...)")
+                result = await self.coordinator.send_raw_command(b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1')
+            elif self._counter == 3:
+                # 4. Commande avec format nouveau
+                _LOGGER.info("👆 TEST #4: Nouveau format (55aa00060...)")
+                result = await self.coordinator.send_raw_command(b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb')
+            else:
+                # 5. Commande ultra simplifiée
+                _LOGGER.info("👆 TEST #5: Commande ultra simplifiée (01)")
+                result = await self.coordinator.send_raw_command(b'\x01')
+            
+            _LOGGER.info("👆 Résultat du test #%s: %s", self._counter + 1, "Succès" if result else "Échec")
+            
+            # Notification temporaire pour informer l'utilisateur
+            self.hass.components.persistent_notification.create(
+                f"Test #{self._counter + 1} envoyé avec succès. "
+                f"Vérifiez si votre bidet a réagi. "
+                f"Appuyez à nouveau pour essayer un format différent.",
+                "Test du Bidet WC",
+                f"bidet_test_{self._counter}"
+            )
         except Exception as err:
             _LOGGER.error("👆 Erreur lors de l'envoi de la commande: %s", err)
     
