@@ -87,9 +87,7 @@ class BidetCoordinator:
 
     async def send_command(self, cmd: str, value: str) -> bool:
         """Envoyer une commande au bidet."""
-        from .const import CMD_HEADER, CMD_PROTOCOL, CMD_TRAILER
-        
-        _LOGGER.info("Tentative d'envoi de commande au bidet: %s, %s", cmd, value)
+        _LOGGER.info("Tentative d'envoi de commande pour activer la chasse d'eau")
         
         # S'assurer que nous sommes connectés
         if not self.client or not self.connected:
@@ -101,73 +99,55 @@ class BidetCoordinator:
                 _LOGGER.error("Erreur lors de la reconnexion: %s", err)
                 return False
             
-        # Redécouvrir les services à chaque fois pour s'assurer d'avoir les dernières informations
+        # Commandes binaires directes (hardcodées) pour la chasse d'eau
+        # Ces commandes sont basées sur l'analyse de l'application officielle
+        # et devraient fonctionner directement sans avoir besoin de calculer des checksums
+        simple_commands = [
+            # Chasse d'eau simplifiée pour les anciens modèles
+            b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1',
+            # Alternative avec format légèrement différent
+            b'\x55\xaa\x00\x01\x00\x01\x01',
+            # Commande plus simple
+            b'\x01'
+        ]
+        
         try:
-            _LOGGER.info("Redécouverte des services et caractéristiques...")
-            await self.client.get_services(force_discovery=True)
-        except Exception as err:
-            _LOGGER.warning("Erreur lors de la redécouverte des services: %s", err)
-
-        try:
-            # Construction de la commande
-            cmd_length = "05"  # Longueur fixe pour la commande de chasse d'eau
-            data_part = f"{cmd}{CMD_TRAILER}{value}"
-            
-            # Construction de la commande sans checksum
-            cmd_without_checksum = f"{CMD_HEADER}{CMD_PROTOCOL}{cmd_length}{data_part}"
-            
-            # Calcul du checksum
-            checksum = self._calculate_checksum(cmd_without_checksum)
-            
-            # Commande finale
-            final_cmd = f"{cmd_without_checksum}{checksum}"
-            
-            _LOGGER.info("Commande finale: %s", final_cmd)
-            
-            # Conversion en bytes
-            cmd_bytes = binascii.unhexlify(final_cmd)
-            
-            # Essayer DIRECTEMENT l'ancienne caractéristique (ffe1) car nous savons que la nouvelle ne fonctionne pas
-            _LOGGER.info("Tentative d'envoi sur la caractéristique ANCIENNE (ffe1)")
-            try:
-                await self.client.write_gatt_char(OLD_CHARACTERISTIC_UUID, cmd_bytes)
-                _LOGGER.info("Commande envoyée avec succès sur la caractéristique ANCIENNE")
-                return True
-            except Exception as err:
-                _LOGGER.warning("Échec sur la caractéristique ANCIENNE: %s", err)
-            
-            # Essayer toutes les caractéristiques d'écriture disponibles
-            _LOGGER.info("Tentative d'envoi sur toutes les caractéristiques d'écriture disponibles")
-            
-            # Obtenir tous les services et caractéristiques
+            # Découvrir tous les services et caractéristiques
+            _LOGGER.info("Découverte des services et caractéristiques...")
             services = await self.client.get_services(force_discovery=True)
             
-            # Créer un objet simple pour stocker la commande des bytes
-            simple_command = b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1'
+            # Première tentative: essayer directement avec l'ancien UUID
+            _LOGGER.info("Tentative directe avec l'ancien UUID FFE1...")
+            try:
+                for cmd_bytes in simple_commands:
+                    try:
+                        _LOGGER.info("Envoi commande: %s sur FFE1", cmd_bytes.hex())
+                        await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", cmd_bytes)
+                        _LOGGER.info("Commande envoyée avec succès sur FFE1!")
+                        return True
+                    except Exception as cmd_err:
+                        _LOGGER.info("Échec commande spécifique: %s", cmd_err)
+            except Exception as err:
+                _LOGGER.warning("Échec FFE1: %s", err)
             
-            # Essayer sur toutes les caractéristiques avec propriété d'écriture
-            success = False
+            # Deuxième tentative: parcourir toutes les caractéristiques
+            _LOGGER.info("Parcours de toutes les caractéristiques...")
             for service in services:
                 _LOGGER.info("Service: %s", service.uuid)
                 for char in service.characteristics:
-                    props = char.properties
-                    _LOGGER.info("  Caractéristique: %s, Propriétés: %s", char.uuid, props)
-                    
-                    if "write" in props or "write-without-response" in props:
-                        try:
-                            _LOGGER.info("  Tentative d'écriture sur: %s", char.uuid)
-                            await self.client.write_gatt_char(char.uuid, simple_command)
-                            _LOGGER.info("  SUCCÈS sur caractéristique: %s", char.uuid)
-                            success = True
-                            return True
-                        except Exception as write_err:
-                            _LOGGER.warning("  Échec d'écriture sur %s: %s", char.uuid, str(write_err))
+                    if "write" in char.properties or "write-without-response" in char.properties:
+                        _LOGGER.info("Caractéristique avec écriture: %s", char.uuid)
+                        for cmd_bytes in simple_commands:
+                            try:
+                                _LOGGER.info("Envoi commande sur %s", char.uuid)
+                                await self.client.write_gatt_char(char.uuid, cmd_bytes)
+                                _LOGGER.info("SUCCÈS sur %s", char.uuid)
+                                return True
+                            except Exception:
+                                pass  # Continuer avec la prochaine commande/caractéristique
             
-            if not success:
-                _LOGGER.error("Impossible d'envoyer la commande sur aucune caractéristique")
-                return False
-            
-            return success
+            _LOGGER.error("Échec: aucune commande n'a fonctionné sur aucune caractéristique")
+            return False
         except Exception as err:
             _LOGGER.error("Erreur lors de l'envoi de la commande: %s", err)
             self.connected = False
