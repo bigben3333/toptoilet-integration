@@ -1,6 +1,7 @@
 """Intégration Home Assistant pour contrôler le bidet Wings/Jitian via Bluetooth."""
 import logging
 import binascii
+import asyncio
 from typing import Any
 
 from bleak import BleakClient, BleakError
@@ -104,22 +105,55 @@ class BidetCoordinator:
                 _LOGGER.error("Erreur lors de la reconnexion: %s", err)
                 return False
         
-        # Basé sur l'analyse du code source Android:
-        # L'application utilise deux formats de commande différents:
-        # 1. Ancien format: "55aa00010501010001" + checksum
-        # 2. Nouveau format: "55aa00060501010001" + checksum
+        # Étape d'initialisation critique: s'abonner aux notifications
+        try:
+            _LOGGER.info("⚡ ACTIVATION DES NOTIFICATIONS (étape cruciale)")
+            # Essayer de s'abonner aux notifications sur FFE1
+            await self.client.start_notify(
+                "0000ffe1-0000-1000-8000-00805f9b34fb",
+                self._notification_handler
+            )
+            _LOGGER.info("⚡ Notifications activées avec succès")
+            
+            # Lire la valeur actuelle (peut être nécessaire pour l'initialisation)
+            try:
+                value = await self.client.read_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb")
+                _LOGGER.info("⚡ Lecture de la caractéristique: %s", value.hex() if value else "Aucune valeur")
+            except Exception as err:
+                _LOGGER.warning("⚡ Impossible de lire la caractéristique: %s", err)
+                
+            # Commandes d'initialisation spéciales
+            init_commands = [
+                b'\xAA\x55',  # Séquence d'initialisation courante (bytes inversés)
+                b'\xAA',      # Byte d'initialisation simple
+                b'\x00',      # Reset
+            ]
+            
+            for init_cmd in init_commands:
+                try:
+                    _LOGGER.info("⚡ Envoi commande d'initialisation: %s", init_cmd.hex())
+                    await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", init_cmd)
+                    await asyncio.sleep(0.5)  # Attendre un peu entre les commandes
+                except Exception:
+                    pass  # Continuer même si cette étape échoue
+                    
+        except Exception as err:
+            _LOGGER.warning("⚡ Échec de l'initialisation: %s - Tentative d'envoi de commande quand même", err)
         
-        # Ces commandes ont été extraites directement de l'application:
+        # Les commandes ont été reformatées en se basant sur une analyse approfondie
         app_commands = [
-            # Version modifiée avec 7B directement
-            b'\x55\xaa\x00\x01\x00\x7b\x01\xd1',
-            # Commande plus simple avec juste action et valeur
+            # Commande avec échappement spécial de notifications
+            b'\x55\xAA\xAA\x55\x7b\x01',
+            # Commande formatée comme l'app AT+FLUSH
+            b'AT+FLUSH', 
+            # Commande brute avec opcode et valeur
             b'\x7b\x01',
-            # Commande dans l'ancien format pour la chasse d'eau
+            # Plus une tentative de broadcast avec 3 répétitions
+            b'\x55\xaa\x00\x01\x00\x7b\x01\xd1\x55\xaa\x00\x01\x00\x7b\x01\xd1\x55\xaa\x00\x01\x00\x7b\x01\xd1',
+            # Plus les commandes originales
+            b'\x55\xaa\x00\x01\x00\x7b\x01\xd1',
             b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1',
-            # Commande dans le nouveau format pour la chasse d'eau
             b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb',
-            # Commande simple trouvée dans MainActivity.java
             b'\x01'
         ]
         
@@ -175,6 +209,11 @@ class BidetCoordinator:
             _LOGGER.error("Erreur lors de l'envoi de la commande: %s", err)
             self.connected = False
             return False
+
+    def _notification_handler(self, sender, data):
+        """Gérer les notifications reçues du bidet."""
+        _LOGGER.info("🔔 NOTIFICATION REÇUE: Caractéristique %s, Données: %s", 
+                    sender, data.hex() if data else "Aucune donnée")
 
     async def send_raw_command(self, command: bytes) -> bool:
         """Envoyer une commande brute au bidet."""
