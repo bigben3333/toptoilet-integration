@@ -16,7 +16,7 @@ from homeassistant.helpers.entity import Entity
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 
-from .const import DOMAIN, PLATFORMS, SERVICE_UUID, CHARACTERISTIC_UUID, SERVICE_PREPARE_PAIRING
+from .const import DOMAIN, PLATFORMS, SERVICE_UUID, CHARACTERISTIC_UUID, OLD_SERVICE_UUID, OLD_CHARACTERISTIC_UUID, SERVICE_PREPARE_PAIRING
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,8 +57,35 @@ class BidetCoordinator:
                 device=ble_device,
                 name=self.address,
                 disconnected_callback=disconnected_callback,
-                use_services_cache=True,
+                use_services_cache=False,  # Désactiver le cache pour forcer une nouvelle découverte
             )
+            
+            # Liste toutes les caractéristiques disponibles
+            try:
+                services = await self.client.get_services()
+                _LOGGER.info("Services disponibles pour %s:", self.address)
+                self.writable_characteristics = []
+                for service in services:
+                    _LOGGER.info("  Service: %s", service.uuid)
+                    for char in service.characteristics:
+                        props = []
+                        if "read" in char.properties:
+                            props.append("read")
+                        if "write" in char.properties:
+                            props.append("write")
+                            self.writable_characteristics.append(char.uuid)
+                        if "notify" in char.properties:
+                            props.append("notify")
+                        _LOGGER.info("    Caractéristique: %s (%s)", char.uuid, ", ".join(props))
+                
+                if not self.writable_characteristics:
+                    _LOGGER.error("Aucune caractéristique d'écriture trouvée sur l'appareil")
+                    return False
+                    
+                _LOGGER.info("Caractéristiques d'écriture disponibles: %s", self.writable_characteristics)
+            except Exception as err:
+                _LOGGER.warning("Impossible de lister les services/caractéristiques: %s", err)
+                
             self.connected = True
             return True
         except (BleakError, BleakNotFoundError) as error:
@@ -86,8 +113,9 @@ class BidetCoordinator:
         """Envoyer une commande au bidet."""
         from .const import CMD_HEADER, CMD_PROTOCOL, CMD_TRAILER
         
-        _LOGGER.debug("Tentative d'envoi de commande au bidet: %s, %s", cmd, value)
+        _LOGGER.info("Tentative d'envoi de commande au bidet: %s, %s", cmd, value)
         
+        # S'assurer que nous sommes connectés
         if not self.client or not self.connected:
             try:
                 if not await self.connect():
@@ -111,33 +139,46 @@ class BidetCoordinator:
             # Commande finale
             final_cmd = f"{cmd_without_checksum}{checksum}"
             
-            _LOGGER.debug("Commande finale: %s", final_cmd)
+            _LOGGER.info("Commande finale: %s", final_cmd)
             
             # Conversion en bytes
             cmd_bytes = binascii.unhexlify(final_cmd)
             
-            # Envoi de la commande
+            # Essayer d'abord la nouvelle caractéristique (fff1)
             try:
+                _LOGGER.info("Tentative d'envoi sur la caractéristique NOUVELLE (fff1)")
                 await self.client.write_gatt_char(CHARACTERISTIC_UUID, cmd_bytes)
-                _LOGGER.info("Commande envoyée avec succès sur caractéristique standard")
+                _LOGGER.info("Commande envoyée avec succès sur la NOUVELLE caractéristique")
                 return True
             except Exception as err:
-                _LOGGER.warning("Erreur lors de l'envoi à la caractéristique spécifique, tentative avec découverte des caractéristiques: %s", err)
-                # Découverte des services et caractéristiques
-                services = await self.client.get_services()
-                for service in services:
-                    for char in service.characteristics:
-                        if "write" in char.properties:
-                            _LOGGER.debug("Tentative d'envoi sur caractéristique: %s", char.uuid)
-                            try:
-                                await self.client.write_gatt_char(char.uuid, cmd_bytes)
-                                _LOGGER.info("Commande envoyée avec succès sur caractéristique: %s", char.uuid)
-                                return True
-                            except Exception as write_err:
-                                _LOGGER.debug("Échec de l'envoi sur caractéristique %s: %s", char.uuid, write_err)
-                
-                _LOGGER.error("Aucune caractéristique d'écriture compatible trouvée")
-                return False
+                _LOGGER.warning("Échec sur la caractéristique NOUVELLE: %s", err)
+            
+            # Ensuite essayer l'ancienne caractéristique (ffe1)
+            try:
+                _LOGGER.info("Tentative d'envoi sur la caractéristique ANCIENNE (ffe1)")
+                await self.client.write_gatt_char(OLD_CHARACTERISTIC_UUID, cmd_bytes)
+                _LOGGER.info("Commande envoyée avec succès sur l'ANCIENNE caractéristique")
+                return True
+            except Exception as err:
+                _LOGGER.warning("Échec sur la caractéristique ANCIENNE: %s", err)
+            
+            # Si les deux échouent, rechercher toutes les caractéristiques qui supportent l'écriture
+            _LOGGER.info("Tentative de découverte de toutes les caractéristiques d'écriture")
+            services = await self.client.get_services()
+            for service in services:
+                _LOGGER.info("  Service UUID: %s", service.uuid)
+                for char in service.characteristics:
+                    if "write" in char.properties:
+                        try:
+                            _LOGGER.info("  Tentative d'écriture sur caractéristique: %s", char.uuid)
+                            await self.client.write_gatt_char(char.uuid, cmd_bytes)
+                            _LOGGER.info("  Commande envoyée avec succès sur caractéristique: %s", char.uuid)
+                            return True
+                        except Exception as write_err:
+                            _LOGGER.warning("  Échec sur la caractéristique %s: %s", char.uuid, write_err)
+            
+            _LOGGER.error("Impossible d'envoyer la commande sur aucune caractéristique disponible")
+            return False
         except Exception as err:
             _LOGGER.error("Erreur lors de l'envoi de la commande: %s", err)
             self.connected = False

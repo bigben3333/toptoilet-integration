@@ -7,12 +7,12 @@
           "address": "Device",
           "name": "Name"
         },
-        "description": "{instructions}\n\nSelect your bidet from the list of detected Bluetooth devices."
+        "description": "To ensure proper detection, restart your toilet (power off and on).\n\nSelect your bidet (Usually named HMSoft) from the list of detected Bluetooth devices."
       }
     },
     "abort": {
       "already_configured": "This device is already configured.",
-      "no_devices_found": "No compatible bidet devices found. {instructions}",
+      "no_devices_found": "No compatible bidet devices found. Restart your toilet (power off and on) and make sure it is within range of your Home Assistant server.",
       "not_supported": "This device is not supported."
     }
   },

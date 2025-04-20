@@ -33,18 +33,16 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
 
-        for service_info in discovery_info.advertisement.service_uuids:
-            if service_info.lower() == SERVICE_UUID.lower():
-                device = discovery_info.device
-                name = device.name or discovery_info.address
-                return self.async_create_entry(
-                    title=name,
-                    data={
-                        CONF_NAME: name,
-                        CONF_ADDRESS: discovery_info.address,
-                    },
-                )
-        return self.async_abort(reason="not_supported")
+        # Accepte tous les appareils Bluetooth pour plus de flexibilité
+        device = discovery_info.device
+        name = device.name or discovery_info.address
+        return self.async_create_entry(
+            title=name,
+            data={
+                CONF_NAME: name,
+                CONF_ADDRESS: discovery_info.address,
+            },
+        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

@@ -7,8 +7,13 @@ DOMAIN = "bidet"
 PLATFORMS = [Platform.BUTTON]
 
 # UUID pour le service Bluetooth et les caractéristiques
+# Nouveaux modèles
 SERVICE_UUID = "0000fff0-0000-1000-8000-00805f9b34fb"
 CHARACTERISTIC_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
+
+# Anciens modèles (trouvés dans l'application officielle)
+OLD_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
+OLD_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 # Constantes pour l'appairage
 PAIRING_TIMEOUT = 30  # Durée en secondes pour l'appairage
