@@ -100,6 +100,13 @@ class BidetCoordinator:
             except Exception as err:
                 _LOGGER.error("Erreur lors de la reconnexion: %s", err)
                 return False
+            
+        # Redécouvrir les services à chaque fois pour s'assurer d'avoir les dernières informations
+        try:
+            _LOGGER.info("Redécouverte des services et caractéristiques...")
+            await self.client.get_services(force_discovery=True)
+        except Exception as err:
+            _LOGGER.warning("Erreur lors de la redécouverte des services: %s", err)
 
         try:
             # Construction de la commande
@@ -120,41 +127,47 @@ class BidetCoordinator:
             # Conversion en bytes
             cmd_bytes = binascii.unhexlify(final_cmd)
             
-            # Essayer d'abord la nouvelle caractéristique (fff1)
+            # Essayer DIRECTEMENT l'ancienne caractéristique (ffe1) car nous savons que la nouvelle ne fonctionne pas
+            _LOGGER.info("Tentative d'envoi sur la caractéristique ANCIENNE (ffe1)")
             try:
-                _LOGGER.info("Tentative d'envoi sur la caractéristique NOUVELLE (fff1)")
-                await self.client.write_gatt_char(CHARACTERISTIC_UUID, cmd_bytes)
-                _LOGGER.info("Commande envoyée avec succès sur la NOUVELLE caractéristique")
-                return True
-            except Exception as err:
-                _LOGGER.warning("Échec sur la caractéristique NOUVELLE: %s", err)
-            
-            # Ensuite essayer l'ancienne caractéristique (ffe1)
-            try:
-                _LOGGER.info("Tentative d'envoi sur la caractéristique ANCIENNE (ffe1)")
                 await self.client.write_gatt_char(OLD_CHARACTERISTIC_UUID, cmd_bytes)
-                _LOGGER.info("Commande envoyée avec succès sur l'ANCIENNE caractéristique")
+                _LOGGER.info("Commande envoyée avec succès sur la caractéristique ANCIENNE")
                 return True
             except Exception as err:
                 _LOGGER.warning("Échec sur la caractéristique ANCIENNE: %s", err)
             
-            # Si les deux échouent, rechercher toutes les caractéristiques qui supportent l'écriture
-            _LOGGER.info("Tentative de découverte de toutes les caractéristiques d'écriture")
-            services = await self.client.get_services()
+            # Essayer toutes les caractéristiques d'écriture disponibles
+            _LOGGER.info("Tentative d'envoi sur toutes les caractéristiques d'écriture disponibles")
+            
+            # Obtenir tous les services et caractéristiques
+            services = await self.client.get_services(force_discovery=True)
+            
+            # Créer un objet simple pour stocker la commande des bytes
+            simple_command = b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1'
+            
+            # Essayer sur toutes les caractéristiques avec propriété d'écriture
+            success = False
             for service in services:
-                _LOGGER.info("  Service UUID: %s", service.uuid)
+                _LOGGER.info("Service: %s", service.uuid)
                 for char in service.characteristics:
-                    if "write" in char.properties:
+                    props = char.properties
+                    _LOGGER.info("  Caractéristique: %s, Propriétés: %s", char.uuid, props)
+                    
+                    if "write" in props or "write-without-response" in props:
                         try:
-                            _LOGGER.info("  Tentative d'écriture sur caractéristique: %s", char.uuid)
-                            await self.client.write_gatt_char(char.uuid, cmd_bytes)
-                            _LOGGER.info("  Commande envoyée avec succès sur caractéristique: %s", char.uuid)
+                            _LOGGER.info("  Tentative d'écriture sur: %s", char.uuid)
+                            await self.client.write_gatt_char(char.uuid, simple_command)
+                            _LOGGER.info("  SUCCÈS sur caractéristique: %s", char.uuid)
+                            success = True
                             return True
                         except Exception as write_err:
-                            _LOGGER.warning("  Échec sur la caractéristique %s: %s", char.uuid, write_err)
+                            _LOGGER.warning("  Échec d'écriture sur %s: %s", char.uuid, str(write_err))
             
-            _LOGGER.error("Impossible d'envoyer la commande sur aucune caractéristique disponible")
-            return False
+            if not success:
+                _LOGGER.error("Impossible d'envoyer la commande sur aucune caractéristique")
+                return False
+            
+            return success
         except Exception as err:
             _LOGGER.error("Erreur lors de l'envoi de la commande: %s", err)
             self.connected = False
