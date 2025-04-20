@@ -55,8 +55,12 @@ class BidetFlushButton(ButtonEntity):
     
     async def async_press(self) -> None:
         """Gérer l'appui sur le bouton."""
-        _LOGGER.debug("Bouton de chasse d'eau pressé")
-        await self.coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
+        _LOGGER.info("👆 Bouton de chasse d'eau pressé - envoi de la commande %s:%s", CMD_FLUSH, VAL_FLUSH_ON)
+        try:
+            result = await self.coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
+            _LOGGER.info("👆 Résultat de l'envoi de commande: %s", "Succès" if result else "Échec")
+        except Exception as err:
+            _LOGGER.error("👆 Erreur lors de l'envoi de la commande: %s", err)
     
     def _handle_disconnect(self) -> None:
         """Gérer la déconnexion du bidet."""
