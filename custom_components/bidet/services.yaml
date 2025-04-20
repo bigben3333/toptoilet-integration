@@ -6,3 +6,36 @@ prepare_pairing:
     Affiche les instructions pour mettre votre bidet en mode appairage.
     Suivez ces étapes avant d'ajouter l'intégration pour faciliter la découverte de l'appareil.
   fields: {}
+
+test_command:
+  name: Tester une commande
+  description: >
+    Envoie une commande directe au bidet pour le débogage.
+    Utilise un format binaire prédéfini ou une commande personnalisée.
+  fields:
+    device_id:
+      name: ID de l'appareil
+      description: ID de l'appareil (device_id) auquel envoyer la commande
+      required: true
+      example: "01234567890abcdef"
+      selector:
+        device:
+          integration: bidet
+    command_type:
+      name: Type de commande
+      description: Type de commande à envoyer
+      required: true
+      selector:
+        select:
+          options:
+            - "flush"
+            - "old_format"
+            - "new_format"
+            - "raw"
+    raw_command:
+      name: Commande brute (hex)
+      description: Commande brute en format hexadécimal (sans espaces)
+      required: false
+      example: "55aa00010501010001a1"
+      selector:
+        text:
