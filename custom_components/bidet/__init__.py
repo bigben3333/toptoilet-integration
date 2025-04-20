@@ -9,10 +9,12 @@ from bleak_retry_connector import establish_connection, BleakNotFoundError
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady
+import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 
-from .const import DOMAIN, PLATFORMS, SERVICE_UUID, CHARACTERISTIC_UUID
+from .const import DOMAIN, PLATFORMS, SERVICE_UUID, CHARACTERISTIC_UUID, SERVICE_PREPARE_PAIRING
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,8 +131,34 @@ class BidetCoordinator:
         return checksum_hex
 
 
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Configurer le service d'appairage."""
+    
+    # Définir le service de préparation d'appairage
+    async def handle_prepare_pairing(call: ServiceCall) -> None:
+        """Gérer le service de préparation à l'appairage."""
+        _LOGGER.info("Service de préparation à l'appairage appelé. Suivez les instructions pour mettre votre bidet en mode appairage:")
+        _LOGGER.info("1. Assurez-vous que le bidet est sous tension")
+        _LOGGER.info("2. Vérifiez que la lunette des toilettes est baissée")
+        _LOGGER.info("3. Appuyez et maintenez le bouton 'Stop' sur le panneau pendant 3 secondes")
+        _LOGGER.info("4. Attendez que la LED commence à clignoter")
+        
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PREPARE_PAIRING,
+        handle_prepare_pairing,
+        schema=vol.Schema({})
+    )
+    
+    return True
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configurer le bidet à partir d'une entrée de configuration."""
+    # Assurez-vous que le setup général a été effectué
+    if not hass.data.get(DOMAIN):
+        hass.data[DOMAIN] = {}
+        await async_setup(hass, {})
+    
     address = entry.data[CONF_ADDRESS]
     
     coordinator = BidetCoordinator(hass, address)

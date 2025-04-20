@@ -1,0 +1,8 @@
+# Services pour l'intégration Bidet WC
+
+prepare_pairing:
+  name: Préparer l'appairage
+  description: >
+    Affiche les instructions pour mettre votre bidet en mode appairage.
+    Suivez ces étapes avant d'ajouter l'intégration pour faciliter la découverte de l'appareil.
+  fields: {}
