@@ -1,22 +1,18 @@
 {
   "config": {
     "step": {
-      "pairing": {
-        "title": "Prepare your Bidet for pairing",
-        "description": "To put your Top Toilet / Bidet WC in pairing mode:\n\n1. Make sure the bidet is powered on\n2. Check that the toilet seat is down\n3. Press and hold the 'Stop' button on the side panel for 3 seconds\n4. Wait for the LED to start blinking (this indicates pairing mode is active)\n\nClick SUBMIT when your bidet is in pairing mode (up to {timeout} seconds)."
-      },
       "user": {
         "title": "Set up Top Toilet / Bidet WC",
         "data": {
           "address": "Device",
           "name": "Name"
         },
-        "description": "Select your bidet from the list of detected Bluetooth devices."
+        "description": "{instructions}\n\nSelect your bidet from the list of detected Bluetooth devices."
       }
     },
     "abort": {
       "already_configured": "This device is already configured.",
-      "no_devices_found": "No compatible bidet devices found. Make sure your device is powered on and nearby.",
+      "no_devices_found": "No compatible bidet devices found. {instructions}",
       "not_supported": "This device is not supported."
     }
   },

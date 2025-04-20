@@ -1,22 +1,18 @@
 {
   "config": {
     "step": {
-      "pairing": {
-        "title": "Préparez votre Bidet pour l'appairage",
-        "description": "Pour mettre votre Top Toilet / Bidet WC en mode appairage :\n\n1. Assurez-vous que le bidet est sous tension\n2. Vérifiez que la lunette des toilettes est baissée\n3. Appuyez et maintenez le bouton 'Stop' sur le panneau latéral pendant 3 secondes\n4. Attendez que la LED commence à clignoter (cela indique que le mode appairage est actif)\n\nCliquez sur SOUMETTRE lorsque votre bidet est en mode appairage (jusqu'à {timeout} secondes)."
-      },
       "user": {
         "title": "Configuration du Top Toilet / Bidet WC",
         "data": {
           "address": "Appareil",
           "name": "Nom"
         },
-        "description": "Sélectionnez votre bidet dans la liste des appareils Bluetooth détectés."
+        "description": "{instructions}\n\nSélectionnez votre bidet dans la liste des appareils Bluetooth détectés."
       }
     },
     "abort": {
       "already_configured": "Cet appareil est déjà configuré.",
-      "no_devices_found": "Aucun bidet compatible n'a été trouvé. Vérifiez que votre appareil est allumé et à proximité."
+      "no_devices_found": "Aucun bidet compatible n'a été trouvé. {instructions}"
     }
   },
   "entity": {

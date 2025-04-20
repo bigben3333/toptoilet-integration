@@ -12,7 +12,7 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import CONF_ADDRESS, CONF_NAME
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, SERVICE_UUID, PAIRING_TIMEOUT
+from .const import DOMAIN, SERVICE_UUID
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +25,6 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._discovered_devices: dict[str, BLEDevice] = {}
-        self._discovery_info = None
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -38,7 +37,6 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if service_info.lower() == SERVICE_UUID.lower():
                 device = discovery_info.device
                 name = device.name or discovery_info.address
-                
                 return self.async_create_entry(
                     title=name,
                     data={
@@ -52,15 +50,7 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the user step to pick discovered device."""
-        # Afficher les instructions d'appairage avant de faire la découverte des appareils
-        if not user_input and not self._discovered_devices:
-            return self.async_show_form(
-                step_id="pairing",
-                description_placeholders={
-                    "timeout": str(PAIRING_TIMEOUT)
-                },
-            )
-            
+        # Si l'utilisateur a déjà fourni des données (sélectionné un appareil)
         if user_input is not None:
             address = user_input[CONF_ADDRESS]
             await self.async_set_unique_id(address, raise_on_progress=False)
@@ -84,29 +74,36 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     device = discovery_info.device
                     self._discovered_devices[address] = device
 
+        # Si aucun appareil n'est trouvé
         if not self._discovered_devices:
-            return self.async_abort(reason="no_devices_found")
+            # Afficher les instructions de redémarrage dans le message d'erreur
+            return self.async_abort(
+                reason="no_devices_found",
+                description_placeholders={
+                    "instructions": "Redémarrez votre toilette (coupez l'alimentation et rallumez). "
+                                   "Assurez-vous que votre toilette est à portée du serveur Home Assistant."
+                }
+            )
 
+        # Créer un formulaire avec la liste des appareils détectés
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_ADDRESS): vol.In(
                     {
-                        address: f"{device.name} ({address})"
+                        address: f"{device.name or 'Unknown'} ({address})"
                         for address, device in self._discovered_devices.items()
                     }
                 ),
-                vol.Required(CONF_NAME): str,
+                vol.Required(CONF_NAME, default="Bidet WC"): str,
             }
         )
+        
+        # Afficher le formulaire
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
+            description_placeholders={
+                "instructions": "Pour assurer une bonne détection, redémarrez votre toilette "
+                               "(coupez l'alimentation et rallumez)."
+            }
         )
-
-    async def async_step_pairing(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the pairing step to prepare the bidet for connection."""
-        # Cette étape est uniquement utilisée pour afficher les instructions
-        # mais toute soumission nous ramène à l'étape utilisateur
-        return await self.async_step_user(user_input={})
