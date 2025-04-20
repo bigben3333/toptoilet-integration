@@ -57,16 +57,10 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the pairing step to prepare the bidet for connection."""
-        if user_input is not None:
-            # L'utilisateur a confirmé que l'appareil est en mode appairage
-            return await self.async_step_user()
-            
-        return self.async_show_form(
-            step_id="pairing",
-            description_placeholders={
-                "timeout": str(PAIRING_TIMEOUT)
-            },
-        )
+        # Même si l'utilisateur n'a rien soumis (user_input est None),
+        # nous continuons avec la prochaine étape
+        # Cela permet de sauter complètement cette étape
+        return await self.async_step_user()
     
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
