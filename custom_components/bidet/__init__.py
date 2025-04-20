@@ -52,40 +52,16 @@ class BidetCoordinator:
                 _LOGGER.error("Erreur lors de la recherche de l'appareil %s: %s", self.address, err)
                 return False
 
+            # Revenir aux paramètres d'origine qui fonctionnaient
             self.client = await establish_connection(
                 client_class=BleakClient,
                 device=ble_device,
                 name=self.address,
                 disconnected_callback=disconnected_callback,
-                use_services_cache=False,  # Désactiver le cache pour forcer une nouvelle découverte
+                use_services_cache=True,  # Réactivation du cache
             )
             
-            # Liste toutes les caractéristiques disponibles
-            try:
-                services = await self.client.get_services()
-                _LOGGER.info("Services disponibles pour %s:", self.address)
-                self.writable_characteristics = []
-                for service in services:
-                    _LOGGER.info("  Service: %s", service.uuid)
-                    for char in service.characteristics:
-                        props = []
-                        if "read" in char.properties:
-                            props.append("read")
-                        if "write" in char.properties:
-                            props.append("write")
-                            self.writable_characteristics.append(char.uuid)
-                        if "notify" in char.properties:
-                            props.append("notify")
-                        _LOGGER.info("    Caractéristique: %s (%s)", char.uuid, ", ".join(props))
-                
-                if not self.writable_characteristics:
-                    _LOGGER.error("Aucune caractéristique d'écriture trouvée sur l'appareil")
-                    return False
-                    
-                _LOGGER.info("Caractéristiques d'écriture disponibles: %s", self.writable_characteristics)
-            except Exception as err:
-                _LOGGER.warning("Impossible de lister les services/caractéristiques: %s", err)
-                
+            # La connexion a réussi, ne pas faire de vérifications supplémentaires
             self.connected = True
             return True
         except (BleakError, BleakNotFoundError) as error:
