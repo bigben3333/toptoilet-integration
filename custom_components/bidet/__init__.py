@@ -87,7 +87,7 @@ class BidetCoordinator:
 
     async def send_command(self, cmd: str, value: str) -> bool:
         """Envoyer une commande au bidet."""
-        _LOGGER.info("Tentative d'envoi de commande pour activer la chasse d'eau")
+        _LOGGER.info("Tentative d'activation de la chasse d'eau")
         
         # S'assurer que nous sommes connectés
         if not self.client or not self.connected:
@@ -98,55 +98,57 @@ class BidetCoordinator:
             except Exception as err:
                 _LOGGER.error("Erreur lors de la reconnexion: %s", err)
                 return False
-            
-        # Commandes binaires directes (hardcodées) pour la chasse d'eau
-        # Ces commandes sont basées sur l'analyse de l'application officielle
-        # et devraient fonctionner directement sans avoir besoin de calculer des checksums
-        simple_commands = [
-            # Chasse d'eau simplifiée pour les anciens modèles
+        
+        # Basé sur l'analyse du code source Android:
+        # L'application utilise deux formats de commande différents:
+        # 1. Ancien format: "55aa00010501010001" + checksum
+        # 2. Nouveau format: "55aa00060501010001" + checksum
+        
+        # Ces commandes ont été extraites directement de l'application:
+        app_commands = [
+            # Commande dans l'ancien format pour la chasse d'eau
             b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1',
-            # Alternative avec format légèrement différent
-            b'\x55\xaa\x00\x01\x00\x01\x01',
-            # Commande plus simple
+            # Commande dans le nouveau format pour la chasse d'eau
+            b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb',
+            # Commande simple trouvée dans MainActivity.java
             b'\x01'
         ]
         
         try:
-            # Découvrir tous les services et caractéristiques
-            _LOGGER.info("Découverte des services et caractéristiques...")
-            services = await self.client.get_services(force_discovery=True)
-            
-            # Première tentative: essayer directement avec l'ancien UUID
-            _LOGGER.info("Tentative directe avec l'ancien UUID FFE1...")
-            try:
-                for cmd_bytes in simple_commands:
+            # D'après l'analyse de l'application Android, elle essaie différentes caractéristiques:
+            # Essayons d'abord FFE1 (ancienne) puis FFF1 (nouvelle)
+            for uuid in [OLD_CHARACTERISTIC_UUID, CHARACTERISTIC_UUID]:
+                _LOGGER.info("Tentative avec la caractéristique %s", uuid)
+                for command in app_commands:
                     try:
-                        _LOGGER.info("Envoi commande: %s sur FFE1", cmd_bytes.hex())
-                        await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", cmd_bytes)
-                        _LOGGER.info("Commande envoyée avec succès sur FFE1!")
+                        _LOGGER.info("Envoi commande %s", command.hex())
+                        await self.client.write_gatt_char(uuid, command)
+                        _LOGGER.info("✓ SUCCÈS! Commande envoyée via %s", uuid)
                         return True
                     except Exception as cmd_err:
-                        _LOGGER.info("Échec commande spécifique: %s", cmd_err)
-            except Exception as err:
-                _LOGGER.warning("Échec FFE1: %s", err)
+                        _LOGGER.debug("Échec: %s", cmd_err)
             
-            # Deuxième tentative: parcourir toutes les caractéristiques
-            _LOGGER.info("Parcours de toutes les caractéristiques...")
-            for service in services:
-                _LOGGER.info("Service: %s", service.uuid)
-                for char in service.characteristics:
-                    if "write" in char.properties or "write-without-response" in char.properties:
-                        _LOGGER.info("Caractéristique avec écriture: %s", char.uuid)
-                        for cmd_bytes in simple_commands:
-                            try:
-                                _LOGGER.info("Envoi commande sur %s", char.uuid)
-                                await self.client.write_gatt_char(char.uuid, cmd_bytes)
-                                _LOGGER.info("SUCCÈS sur %s", char.uuid)
-                                return True
-                            except Exception:
-                                pass  # Continuer avec la prochaine commande/caractéristique
+            # Si aucune des caractéristiques connues ne fonctionne, essayons toutes les caractéristiques disponibles
+            _LOGGER.info("Tentative avec toutes les caractéristiques disponibles...")
+            services = self.client.services
             
-            _LOGGER.error("Échec: aucune commande n'a fonctionné sur aucune caractéristique")
+            if services:
+                for service in services:
+                    _LOGGER.info("Service: %s", service.uuid)
+                    for char in service.characteristics:
+                        if "write" in char.properties or "write-without-response" in char.properties:
+                            _LOGGER.info("  Caractéristique avec écriture: %s", char.uuid)
+                            for command in app_commands:
+                                try:
+                                    await self.client.write_gatt_char(char.uuid, command)
+                                    _LOGGER.info("  ✓ SUCCÈS sur %s avec %s", char.uuid, command.hex())
+                                    return True
+                                except Exception:
+                                    pass  # Continue avec la commande suivante
+            
+            _LOGGER.error("❌ Échec: aucune commande n'a fonctionné. Vérifiez que votre modèle est compatible.")
+            
+            _LOGGER.error("Échec: aucune solution n'a fonctionné")
             return False
         except Exception as err:
             _LOGGER.error("Erreur lors de l'envoi de la commande: %s", err)
