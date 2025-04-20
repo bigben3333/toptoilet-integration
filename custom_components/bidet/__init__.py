@@ -16,7 +16,12 @@ from homeassistant.helpers.entity import Entity
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 
-from .const import DOMAIN, PLATFORMS, SERVICE_UUID, CHARACTERISTIC_UUID, OLD_SERVICE_UUID, OLD_CHARACTERISTIC_UUID, SERVICE_PREPARE_PAIRING
+from .const import (
+    DOMAIN, PLATFORMS, SERVICE_UUID, CHARACTERISTIC_UUID, 
+    OLD_SERVICE_UUID, OLD_CHARACTERISTIC_UUID, 
+    SERVICE_PREPARE_PAIRING, SERVICE_TEST_COMMAND,
+    CMD_FLUSH, VAL_FLUSH_ON
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -155,6 +160,51 @@ class BidetCoordinator:
             self.connected = False
             return False
 
+    async def send_raw_command(self, command: bytes) -> bool:
+        """Envoyer une commande brute au bidet."""
+        _LOGGER.info("Tentative d'envoi de commande brute: %s", command.hex())
+        
+        # S'assurer que nous sommes connectés
+        if not self.client or not self.connected:
+            try:
+                if not await self.connect():
+                    _LOGGER.error("Impossible de se connecter pour envoyer la commande")
+                    return False
+            except Exception as err:
+                _LOGGER.error("Erreur lors de la reconnexion: %s", err)
+                return False
+        
+        try:
+            # Essayer d'abord les caractéristiques connues
+            for uuid in [OLD_CHARACTERISTIC_UUID, CHARACTERISTIC_UUID]:
+                try:
+                    _LOGGER.info("Tentative d'envoi sur %s", uuid)
+                    await self.client.write_gatt_char(uuid, command)
+                    _LOGGER.info("✓ SUCCÈS! Commande envoyée sur %s", uuid)
+                    return True
+                except Exception as err:
+                    _LOGGER.debug("Échec sur %s: %s", uuid, err)
+            
+            # Ensuite essayer toutes les caractéristiques disponibles
+            services = self.client.services
+            if services:
+                for service in services:
+                    for char in service.characteristics:
+                        if "write" in char.properties or "write-without-response" in char.properties:
+                            try:
+                                _LOGGER.info("Tentative d'envoi sur %s", char.uuid)
+                                await self.client.write_gatt_char(char.uuid, command)
+                                _LOGGER.info("✓ SUCCÈS sur %s", char.uuid)
+                                return True
+                            except Exception:
+                                pass  # Continue avec la caractéristique suivante
+            
+            _LOGGER.error("Échec de l'envoi de la commande brute")
+            return False
+        except Exception as err:
+            _LOGGER.error("Erreur lors de l'envoi de la commande brute: %s", err)
+            return False
+            
     def _calculate_checksum(self, cmd_str: str) -> str:
         """Calculer le checksum selon la méthode du bidet."""
         # Divise la commande en paires de caractères (octets en hex)
@@ -191,12 +241,88 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             "Préparer votre toilette pour l'intégration",
             "bidet_pairing_instructions"
         )
+    
+    # Service de test pour le débogage
+    async def handle_test_command(call: ServiceCall) -> None:
+        """Gérer le service de test de commande."""
+        _LOGGER.info("🔍 Service de test de commande appelé")
         
+        device_id = call.data.get("device_id")
+        command_type = call.data.get("command_type")
+        raw_command = call.data.get("raw_command")
+        
+        # Récupérer le device_id et trouver le coordinateur correspondant
+        device_registry = hass.helpers.device_registry.async_get(hass)
+        device = device_registry.async_get(device_id)
+        
+        if not device:
+            _LOGGER.error("🔍 Appareil non trouvé: %s", device_id)
+            return
+        
+        # Trouver l'entrée de configuration correspondante
+        for identifier in device.identifiers:
+            if identifier[0] == DOMAIN:
+                entry_id = identifier[1]
+                break
+        else:
+            _LOGGER.error("🔍 Impossible de trouver l'entrée de configuration pour l'appareil %s", device_id)
+            return
+        
+        coordinator = hass.data[DOMAIN].get(entry_id)
+        if not coordinator:
+            _LOGGER.error("🔍 Coordinateur non trouvé pour l'entrée %s", entry_id)
+            return
+        
+        _LOGGER.info("🔍 Envoi de commande de test à l'appareil %s (type: %s)", device_id, command_type)
+        
+        try:
+            result = False
+            
+            if command_type == "flush":
+                # Commande de chasse d'eau standard
+                _LOGGER.info("🔍 Envoi commande flush")
+                result = await coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
+            elif command_type == "old_format":
+                # Force l'ancien format
+                command = b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1'
+                _LOGGER.info("🔍 Envoi commande ancien format: %s", command.hex())
+                result = await coordinator.send_raw_command(command)
+            elif command_type == "new_format":
+                # Force le nouveau format
+                command = b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb'
+                _LOGGER.info("🔍 Envoi commande nouveau format: %s", command.hex())
+                result = await coordinator.send_raw_command(command)
+            elif command_type == "raw" and raw_command:
+                # Commande brute
+                try:
+                    # Convertir la chaîne hex en bytes
+                    command = bytes.fromhex(raw_command)
+                    _LOGGER.info("🔍 Envoi commande brute: %s", command.hex())
+                    result = await coordinator.send_raw_command(command)
+                except ValueError as err:
+                    _LOGGER.error("🔍 Format hexadécimal invalide: %s", err)
+            
+            _LOGGER.info("🔍 Résultat de la commande de test: %s", "Succès" if result else "Échec")
+        except Exception as err:
+            _LOGGER.error("🔍 Erreur lors de l'envoi de la commande de test: %s", err)
+    
+    # Enregistrer les services
     hass.services.async_register(
         DOMAIN,
         SERVICE_PREPARE_PAIRING,
         handle_prepare_pairing,
         schema=vol.Schema({})
+    )
+    
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_TEST_COMMAND,
+        handle_test_command,
+        schema=vol.Schema({
+            vol.Required("device_id"): cv.string,
+            vol.Required("command_type"): vol.In(["flush", "old_format", "new_format", "raw"]),
+            vol.Optional("raw_command"): cv.string,
+        })
     )
     
     return True
