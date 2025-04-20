@@ -69,10 +69,9 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if address in current_addresses:
                 continue
 
-            for service_info in discovery_info.advertisement.service_uuids:
-                if service_info.lower() == SERVICE_UUID.lower():
-                    device = discovery_info.device
-                    self._discovered_devices[address] = device
+            # Ajouter tous les appareils Bluetooth, pas seulement ceux avec l'UUID spécifique
+            device = discovery_info.device
+            self._discovered_devices[address] = device
 
         # Si aucun appareil n'est trouvé
         if not self._discovered_devices:

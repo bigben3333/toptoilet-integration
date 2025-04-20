@@ -41,11 +41,15 @@ class BidetCoordinator:
                 for callback in self._disconnect_callbacks:
                     callback()
 
-            ble_device = bluetooth.async_ble_device_from_address(
-                self.hass, self.address, connectable=True
-            )
-            if not ble_device:
-                _LOGGER.error("Impossible de trouver l'appareil: %s", self.address)
+            try:
+                ble_device = bluetooth.async_ble_device_from_address(
+                    self.hass, self.address, connectable=True
+                )
+                if not ble_device:
+                    _LOGGER.error("Impossible de trouver l'appareil: %s", self.address)
+                    return False
+            except Exception as err:
+                _LOGGER.error("Erreur lors de la recherche de l'appareil %s: %s", self.address, err)
                 return False
 
             self.client = await establish_connection(
@@ -82,6 +86,8 @@ class BidetCoordinator:
         """Envoyer une commande au bidet."""
         from .const import CMD_HEADER, CMD_PROTOCOL, CMD_TRAILER
         
+        _LOGGER.debug("Tentative d'envoi de commande au bidet: %s, %s", cmd, value)
+        
         if not self.client or not self.connected:
             try:
                 if not await self.connect():
@@ -111,8 +117,27 @@ class BidetCoordinator:
             cmd_bytes = binascii.unhexlify(final_cmd)
             
             # Envoi de la commande
-            await self.client.write_gatt_char(CHARACTERISTIC_UUID, cmd_bytes)
-            return True
+            try:
+                await self.client.write_gatt_char(CHARACTERISTIC_UUID, cmd_bytes)
+                _LOGGER.info("Commande envoyée avec succès sur caractéristique standard")
+                return True
+            except Exception as err:
+                _LOGGER.warning("Erreur lors de l'envoi à la caractéristique spécifique, tentative avec découverte des caractéristiques: %s", err)
+                # Découverte des services et caractéristiques
+                services = await self.client.get_services()
+                for service in services:
+                    for char in service.characteristics:
+                        if "write" in char.properties:
+                            _LOGGER.debug("Tentative d'envoi sur caractéristique: %s", char.uuid)
+                            try:
+                                await self.client.write_gatt_char(char.uuid, cmd_bytes)
+                                _LOGGER.info("Commande envoyée avec succès sur caractéristique: %s", char.uuid)
+                                return True
+                            except Exception as write_err:
+                                _LOGGER.debug("Échec de l'envoi sur caractéristique %s: %s", char.uuid, write_err)
+                
+                _LOGGER.error("Aucune caractéristique d'écriture compatible trouvée")
+                return False
         except Exception as err:
             _LOGGER.error("Erreur lors de l'envoi de la commande: %s", err)
             self.connected = False
