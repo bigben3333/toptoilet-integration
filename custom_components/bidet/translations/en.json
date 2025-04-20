@@ -1,0 +1,25 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Top Toilet / Bidet WC",
+        "data": {
+          "address": "Device",
+          "name": "Name"
+        },
+        "description": "Select your bidet from the list of detected Bluetooth devices."
+      }
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "no_devices_found": "No compatible bidet devices found. Make sure your device is powered on and nearby."
+    }
+  },
+  "entity": {
+    "button": {
+      "flush": {
+        "name": "Flush"
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Top Toilet / Bidet WC",
+  "render_readme": true,
+  "homeassistant": "2023.8.0",
+  "hacs": "1.30.0",
+  "domains": ["bidet"]
+}
