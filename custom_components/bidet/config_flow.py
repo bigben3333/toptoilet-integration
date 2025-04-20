@@ -12,7 +12,7 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import CONF_ADDRESS, CONF_NAME
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, SERVICE_UUID
+from .const import DOMAIN, SERVICE_UUID, PAIRING_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,10 +53,29 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
+    async def async_step_pairing(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the pairing step to prepare the bidet for connection."""
+        if user_input is not None:
+            # L'utilisateur a confirmé que l'appareil est en mode appairage
+            return await self.async_step_user()
+            
+        return self.async_show_form(
+            step_id="pairing",
+            description_placeholders={
+                "timeout": str(PAIRING_TIMEOUT)
+            },
+        )
+    
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the user step to pick discovered device."""
+        # Si l'utilisateur n'a pas encore passé l'étape d'appairage, le rediriger
+        if not user_input and not self.hass.config_entries.async_entries(DOMAIN):
+            return await self.async_step_pairing()
+            
         if user_input is not None:
             address = user_input[CONF_ADDRESS]
             await self.async_set_unique_id(address, raise_on_progress=False)
