@@ -1,0 +1,24 @@
+# Carte Lovelace pour le service d'appairage du Bidet WC
+# Copiez ce code dans une carte manuelle de votre tableau de bord
+
+type: vertical-stack
+cards:
+  - type: markdown
+    content: >
+      ## Assistant d'appairage Bidet WC
+
+      Pour configurer votre toilette, suivez ces étapes simples:
+      
+      1. Redémarrez votre toilette (coupez l'alimentation et rallumez)
+      2. Cliquez sur le bouton ci-dessous pour obtenir des instructions détaillées
+      3. Ajoutez l'intégration via Paramètres → Appareils et services
+  
+  - type: button
+    name: Préparer ma toilette pour l'intégration
+    icon: mdi:toilet
+    tap_action:
+      action: call-service
+      service: bidet.prepare_pairing
+    show_state: false
+    show_icon: true
+    icon_height: 40px

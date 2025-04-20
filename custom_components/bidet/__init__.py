@@ -133,47 +133,7 @@ class BidetCoordinator:
         return checksum_hex
 
 
-class BidetPairingButtonEntity(ButtonEntity):
-    """Représentation du bouton d'appairage du bidet."""
-    
-    _attr_has_entity_name = True
-    _attr_name = "Assistant d'appairage"
-    _attr_icon = "mdi:bluetooth-connect"
-    _attr_entity_id = "button.bidet_pairing_assistant"
-    _attr_should_poll = False
-    
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialiser le bouton."""
-        self.hass = hass
-        self._attr_unique_id = "bidet_pairing_assistant"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, "pairing_assistant")},
-            "name": "Assistant d'appairage Bidet WC",
-            "manufacturer": "Home Assistant",
-            "model": "Assistant",
-            "sw_version": "1.0",
-        }
-    
-    async def async_press(self) -> None:
-        """Gérer l'appui sur le bouton."""
-        _LOGGER.info("Assistant d'appairage du bidet activé. Suivez les instructions pour mettre votre bidet en mode appairage:")
-        _LOGGER.info("1. Assurez-vous que le bidet est sous tension")
-        _LOGGER.info("2. Vérifiez que la lunette des toilettes est baissée")
-        _LOGGER.info("3. Appuyez et maintenez le bouton 'Stop' sur le panneau pendant 3 secondes")
-        _LOGGER.info("4. Attendez que la LED commence à clignoter")
-        
-        # Notification pour l'utilisateur
-        self.hass.components.persistent_notification.create(
-            "Pour mettre votre Top Toilet / Bidet WC en mode appairage :<br><br>"
-            "1. Assurez-vous que le bidet est sous tension<br>"
-            "2. Vérifiez que la lunette des toilettes est baissée<br>"
-            "3. Appuyez et maintenez le bouton 'Stop' sur le panneau pendant 3 secondes<br>"
-            "4. Attendez que la LED commence à clignoter<br><br>"
-            "Une fois ces étapes effectuées, vous pouvez ajouter l'intégration via "
-            "Paramètres → Appareils et services → Ajouter une intégration → Top Toilet / Bidet WC",
-            "Instructions d'appairage du Bidet WC",
-            "bidet_pairing_instructions"
-        )
+# Aucune classe de bouton n'est nécessaire car nous utiliserons une notification directe
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -182,22 +142,16 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     # Définir le service de préparation d'appairage
     async def handle_prepare_pairing(call: ServiceCall) -> None:
         """Gérer le service de préparation à l'appairage."""
-        _LOGGER.info("Service de préparation à l'appairage appelé. Suivez les instructions pour mettre votre bidet en mode appairage:")
-        _LOGGER.info("1. Assurez-vous que le bidet est sous tension")
-        _LOGGER.info("2. Vérifiez que la lunette des toilettes est baissée")
-        _LOGGER.info("3. Appuyez et maintenez le bouton 'Stop' sur le panneau pendant 3 secondes")
-        _LOGGER.info("4. Attendez que la LED commence à clignoter")
+        _LOGGER.info("Service de préparation à l'appairage appelé")
         
-        # Notification pour l'utilisateur
+        # Notification pour l'utilisateur avec les instructions simplifiées
         hass.components.persistent_notification.create(
-            "Pour mettre votre Top Toilet / Bidet WC en mode appairage :<br><br>"
-            "1. Assurez-vous que le bidet est sous tension<br>"
-            "2. Vérifiez que la lunette des toilettes est baissée<br>"
-            "3. Appuyez et maintenez le bouton 'Stop' sur le panneau pendant 3 secondes<br>"
-            "4. Attendez que la LED commence à clignoter<br><br>"
+            "Pour préparer votre Top Toilet / Bidet WC à la détection Bluetooth :<br><br>"
+            "1. Redémarrez votre toilette (coupez l'alimentation et rallumez)<br>"
+            "2. Assurez-vous que votre toilette est à portée du serveur Home Assistant<br><br>"
             "Une fois ces étapes effectuées, vous pouvez ajouter l'intégration via "
             "Paramètres → Appareils et services → Ajouter une intégration → Top Toilet / Bidet WC",
-            "Instructions d'appairage du Bidet WC",
+            "Préparer votre toilette pour l'intégration",
             "bidet_pairing_instructions"
         )
         
@@ -207,10 +161,6 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         handle_prepare_pairing,
         schema=vol.Schema({})
     )
-    
-    # Ajouter l'entité bouton pour l'assistant d'appairage
-    button = BidetPairingButtonEntity(hass)
-    hass.add_job(hass.async_add_entities, [button])
     
     return True
 
