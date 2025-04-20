@@ -25,6 +25,7 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._discovered_devices: dict[str, BLEDevice] = {}
+        self._discovery_info = None
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -35,40 +36,30 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         for service_info in discovery_info.advertisement.service_uuids:
             if service_info.lower() == SERVICE_UUID.lower():
-                return await self.async_step_bluetooth_confirm(discovery_info)
+                device = discovery_info.device
+                name = device.name or discovery_info.address
+                
+                return self.async_create_entry(
+                    title=name,
+                    data={
+                        CONF_NAME: name,
+                        CONF_ADDRESS: discovery_info.address,
+                    },
+                )
         return self.async_abort(reason="not_supported")
 
-    async def async_step_bluetooth_confirm(
-        self, discovery_info: BluetoothServiceInfoBleak
-    ) -> FlowResult:
-        """Confirm discovery."""
-        device = discovery_info.device
-        name = device.name or discovery_info.address
-        
-        return self.async_create_entry(
-            title=name,
-            data={
-                CONF_NAME: name,
-                CONF_ADDRESS: discovery_info.address,
-            },
-        )
-
-    async def async_step_pairing(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the pairing step to prepare the bidet for connection."""
-        # Même si l'utilisateur n'a rien soumis (user_input est None),
-        # nous continuons avec la prochaine étape
-        # Cela permet de sauter complètement cette étape
-        return await self.async_step_user()
-    
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the user step to pick discovered device."""
-        # Si l'utilisateur n'a pas encore fourni d'input, rediriger vers l'étape d'appairage
-        if not user_input:
-            return await self.async_step_pairing()
+        # Afficher les instructions d'appairage avant de faire la découverte des appareils
+        if not user_input and not self._discovered_devices:
+            return self.async_show_form(
+                step_id="pairing",
+                description_placeholders={
+                    "timeout": str(PAIRING_TIMEOUT)
+                },
+            )
             
         if user_input is not None:
             address = user_input[CONF_ADDRESS]
@@ -80,10 +71,12 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data=user_input,
             )
 
+        # Découvrir les appareils
+        self._discovered_devices = {}
         current_addresses = self._async_current_ids()
         for discovery_info in async_discovered_service_info(self.hass):
             address = discovery_info.address
-            if address in current_addresses or address in self._discovered_devices:
+            if address in current_addresses:
                 continue
 
             for service_info in discovery_info.advertisement.service_uuids:
@@ -109,3 +102,11 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=data_schema,
         )
+
+    async def async_step_pairing(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the pairing step to prepare the bidet for connection."""
+        # Cette étape est uniquement utilisée pour afficher les instructions
+        # mais toute soumission nous ramène à l'étape utilisateur
+        return await self.async_step_user(user_input={})
