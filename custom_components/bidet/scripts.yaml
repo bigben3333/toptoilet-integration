@@ -1,0 +1,32 @@
+# Scripts de test pour l'intégration Bidet WC
+
+test_flush:
+  alias: "Test Chasse d'eau"
+  description: "Envoie une commande de chasse d'eau au bidet"
+  fields:
+    device_id:
+      name: ID de l'appareil
+      description: ID de l'appareil bidet à tester
+      required: true
+      selector:
+        device:
+          integration: bidet
+    command_type:
+      name: Type de commande
+      description: Format de commande à tester
+      required: true
+      default: "flush"
+      selector:
+        select:
+          options:
+            - label: "Commande standard"
+              value: "flush"
+            - label: "Ancien format"
+              value: "old_format"
+            - label: "Nouveau format" 
+              value: "new_format"
+  sequence:
+    - service: bidet.test_command
+      data:
+        device_id: "{{ device_id }}"
+        command_type: "{{ command_type }}"

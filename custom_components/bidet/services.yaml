@@ -39,3 +39,24 @@ test_command:
       example: "55aa00010501010001a1"
       selector:
         text:
+
+test_simple:
+  name: Tester le bidet (simplifié)
+  description: >
+    Envoie une commande au premier bidet configuré sans avoir besoin de connaître l'ID de l'appareil.
+    Affiche le résultat dans les notifications.
+  fields:
+    command_type:
+      name: Type de commande
+      description: Format de commande à tester
+      required: false
+      default: "flush"
+      selector:
+        select:
+          options:
+            - label: "Commande standard"
+              value: "flush"
+            - label: "Ancien format (0x55aa00010501010001a1)"
+              value: "old_format"
+            - label: "Nouveau format (0x55aa00060501010001db)"
+              value: "new_format"

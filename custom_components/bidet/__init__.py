@@ -306,6 +306,64 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         except Exception as err:
             _LOGGER.error("🔍 Erreur lors de l'envoi de la commande de test: %s", err)
     
+    # Service de test simplifié qui utilise le premier bidet configuré
+    async def handle_test_simple(call: ServiceCall) -> None:
+        """Gérer le service de test simplifié."""
+        command_type = call.data.get("command_type", "flush")
+        
+        _LOGGER.info("🔎 Service de test simplifié appelé (type: %s)", command_type)
+        
+        # Trouver le premier coordinateur bidet disponible
+        if not hass.data.get(DOMAIN):
+            _LOGGER.error("🔎 Aucune intégration bidet configurée")
+            hass.components.persistent_notification.create(
+                "Aucune intégration Bidet WC n'est configurée. Veuillez d'abord ajouter l'intégration.",
+                "Test du Bidet WC",
+                "bidet_test_error"
+            )
+            return
+        
+        # Trouver le premier coordinateur
+        entry_id = next(iter(hass.data[DOMAIN].keys()))
+        coordinator = hass.data[DOMAIN][entry_id]
+        
+        _LOGGER.info("🔎 Utilisation du premier bidet trouvé: %s", coordinator.address)
+        
+        try:
+            result = False
+            
+            if command_type == "flush":
+                # Commande de chasse d'eau standard
+                _LOGGER.info("🔎 Envoi commande flush")
+                result = await coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
+            elif command_type == "old_format":
+                # Force l'ancien format
+                command = b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1'
+                _LOGGER.info("🔎 Envoi commande ancien format: %s", command.hex())
+                result = await coordinator.send_raw_command(command)
+            elif command_type == "new_format":
+                # Force le nouveau format
+                command = b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb'
+                _LOGGER.info("🔎 Envoi commande nouveau format: %s", command.hex())
+                result = await coordinator.send_raw_command(command)
+            
+            message = "✅ La commande a été envoyée avec succès" if result else "❌ Échec de l'envoi de la commande"
+            _LOGGER.info("🔎 Résultat: %s", message)
+            
+            # Notification du résultat
+            hass.components.persistent_notification.create(
+                message,
+                "Test du Bidet WC",
+                "bidet_test_result"
+            )
+        except Exception as err:
+            _LOGGER.error("🔎 Erreur lors de l'envoi de la commande: %s", err)
+            hass.components.persistent_notification.create(
+                f"Erreur lors de l'envoi de la commande: {err}",
+                "Test du Bidet WC",
+                "bidet_test_error"
+            )
+    
     # Enregistrer les services
     hass.services.async_register(
         DOMAIN,
@@ -322,6 +380,16 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             vol.Required("device_id"): cv.string,
             vol.Required("command_type"): vol.In(["flush", "old_format", "new_format", "raw"]),
             vol.Optional("raw_command"): cv.string,
+        })
+    )
+    
+    # Service de test simplifié
+    hass.services.async_register(
+        DOMAIN,
+        "test_simple",
+        handle_test_simple,
+        schema=vol.Schema({
+            vol.Optional("command_type", default="flush"): vol.In(["flush", "old_format", "new_format"]),
         })
     )
     
