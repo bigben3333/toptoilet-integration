@@ -93,7 +93,7 @@ class BidetCoordinator:
 
     async def send_command(self, cmd: str, value: str) -> bool:
         """Envoyer une commande au bidet."""
-        _LOGGER.info("Tentative d'activation de la chasse d'eau")
+        _LOGGER.info("⭐ Tentative d'activation de la chasse d'eau avec séquence exacte de l'application")
         
         # S'assurer que nous sommes connectés
         if not self.client or not self.connected:
@@ -105,106 +105,65 @@ class BidetCoordinator:
                 _LOGGER.error("Erreur lors de la reconnexion: %s", err)
                 return False
         
-        # Étape d'initialisation critique: s'abonner aux notifications
+        # 1. ÉTAPE CRUCIALE - S'abonner aux notifications AVANT d'envoyer des commandes
+        # C'est exactement ce que fait l'application originale
         try:
-            _LOGGER.info("⚡ ACTIVATION DES NOTIFICATIONS (étape cruciale)")
-            # Essayer de s'abonner aux notifications sur FFE1
+            _LOGGER.info("⚡ 1) ACTIVATION DES NOTIFICATIONS (étape cruciale selon l'application originale)")
+            
+            # L'application utilise la caractéristique FFE1 pour les notifications
             await self.client.start_notify(
-                "0000ffe1-0000-1000-8000-00805f9b34fb",
+                "0000ffe1-0000-1000-8000-00805f9b34fb", 
                 self._notification_handler
             )
-            _LOGGER.info("⚡ Notifications activées avec succès")
+            _LOGGER.info("⚡ Notifications activées avec succès - Le bidet peut maintenant recevoir des commandes")
+            await asyncio.sleep(0.5)  # Attendre que le mode notification soit stable
             
-            # Lire la valeur actuelle (peut être nécessaire pour l'initialisation)
+            # L'app originale fait d'abord une lecture après s'être abonnée
             try:
-                value = await self.client.read_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb")
-                _LOGGER.info("⚡ Lecture de la caractéristique: %s", value.hex() if value else "Aucune valeur")
+                _LOGGER.info("⚡ 2) LECTURE de l'état initial comme dans l'application originale")
+                value_bytes = await self.client.read_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb")
+                _LOGGER.info("⚡ Valeur actuelle: %s", value_bytes.hex() if value_bytes else "Aucune valeur")
+                await asyncio.sleep(0.3)
             except Exception as err:
-                _LOGGER.warning("⚡ Impossible de lire la caractéristique: %s", err)
+                _LOGGER.info("⚡ Lecture non critique impossible: %s", err)
                 
-            # Commandes d'initialisation spéciales
-            init_commands = [
-                b'\xAA\x55',  # Séquence d'initialisation courante (bytes inversés)
-                b'\xAA',      # Byte d'initialisation simple
-                b'\x00',      # Reset
-            ]
-            
-            for init_cmd in init_commands:
-                try:
-                    _LOGGER.info("⚡ Envoi commande d'initialisation: %s", init_cmd.hex())
-                    await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", init_cmd)
-                    await asyncio.sleep(0.5)  # Attendre un peu entre les commandes
-                except Exception:
-                    pass  # Continuer même si cette étape échoue
-                    
         except Exception as err:
-            _LOGGER.warning("⚡ Échec de l'initialisation: %s - Tentative d'envoi de commande quand même", err)
+            _LOGGER.warning("⚡ Échec de l'abonnement aux notifications: %s", err)
+            # Continuer quand même, certains appareils fonctionnent sans notifications
         
-        # Les commandes ont été reformatées en se basant sur une analyse approfondie
-        app_commands = [
-            # Commande avec échappement spécial de notifications
-            b'\x55\xAA\xAA\x55\x7b\x01',
-            # Commande formatée comme l'app AT+FLUSH
-            b'AT+FLUSH', 
-            # Commande brute avec opcode et valeur
-            b'\x7b\x01',
-            # Plus une tentative de broadcast avec 3 répétitions
-            b'\x55\xaa\x00\x01\x00\x7b\x01\xd1\x55\xaa\x00\x01\x00\x7b\x01\xd1\x55\xaa\x00\x01\x00\x7b\x01\xd1',
-            # Plus les commandes originales
-            b'\x55\xaa\x00\x01\x00\x7b\x01\xd1',
-            b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1',
-            b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb',
-            b'\x01'
-        ]
+        # 3. PRÉPARATION DE LA COMMANDE EXACTE (comme dans l'application décompilée)
+        # Dans l'app, la commande de chasse d'eau est une instance de CmdBean avec:
+        # - type: paramètre du constructeur
+        # - cmd: 7b (commande flush)
+        # - value: 01 (valeur pour activer)
         
+        # Construction de la commande comme dans l'app (MainActivity ligne 524-525)
+        # Le checksum est calculé sur cette chaîne de base
+        cmd_base = "55aa000100" + cmd + "0001" + value 
+        checksum = self._calculate_checksum(cmd_base)
+        full_cmd_hex = cmd_base + checksum
+        
+        _LOGGER.info("⚡ 3) ENVOI de la commande exacte formatée comme dans l'application: %s", full_cmd_hex)
+        full_cmd = bytes.fromhex(full_cmd_hex)
+        
+        # 4. ENVOI DE LA COMMANDE - Exactement comme l'app le fait
         try:
-            # D'après l'analyse de l'application Android, elle essaie différentes caractéristiques:
-            # Essayons d'abord FFE1 (ancienne) puis FFF1 (nouvelle)
-            # Pour aider au débogage, imprimons toutes les caractéristiques disponibles
-            _LOGGER.info("🔍 LISTE COMPLÈTE DES SERVICES ET CARACTÉRISTIQUES:")
-            try:
-                services = self.client.services
-                for service in services:
-                    _LOGGER.info("🔍 Service: %s", service.uuid)
-                    for char in service.characteristics:
-                        props = char.properties
-                        _LOGGER.info("🔍   Caractéristique: %s, Props: %s", char.uuid, props)
-            except Exception as err:
-                _LOGGER.warning("🔍 Impossible de lister les services: %s", err)
+            # L'application utilise toujours la caractéristique FFE1
+            # En analysant MainActivity.java, l'app ne fait pas d'essais-erreurs,
+            # elle envoie directement à la caractéristique trouvée
+            _LOGGER.info("⚡ 4) ENVOI sur la caractéristique exacte de l'application: 0000ffe1-0000-1000-8000-00805f9b34fb")
             
-            for uuid in [OLD_CHARACTERISTIC_UUID, CHARACTERISTIC_UUID]:
-                _LOGGER.info("Tentative avec la caractéristique %s", uuid)
-                for command in app_commands:
-                    try:
-                        _LOGGER.info("Envoi commande %s", command.hex())
-                        await self.client.write_gatt_char(uuid, command)
-                        _LOGGER.info("✓ SUCCÈS! Commande envoyée via %s", uuid)
-                        return True
-                    except Exception as cmd_err:
-                        _LOGGER.debug("Échec: %s", cmd_err)
+            # Méthode exacte utilisée par l'app
+            await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", full_cmd)
             
-            # Si aucune des caractéristiques connues ne fonctionne, essayons toutes les caractéristiques disponibles
-            _LOGGER.info("Tentative avec toutes les caractéristiques disponibles...")
-            services = self.client.services
+            # L'app attend ensuite une notification de retour, mais c'est géré par le handler
+            # On attendra donc un moment pour voir si une notification arrive
+            _LOGGER.info("⚡ 5) ATTENTE de notification retour (comme dans l'app)...")
+            await asyncio.sleep(1)  # Attendre que la notification arrive potentiellement
             
-            if services:
-                for service in services:
-                    _LOGGER.info("Service: %s", service.uuid)
-                    for char in service.characteristics:
-                        if "write" in char.properties or "write-without-response" in char.properties:
-                            _LOGGER.info("  Caractéristique avec écriture: %s", char.uuid)
-                            for command in app_commands:
-                                try:
-                                    await self.client.write_gatt_char(char.uuid, command)
-                                    _LOGGER.info("  ✓ SUCCÈS sur %s avec %s", char.uuid, command.hex())
-                                    return True
-                                except Exception:
-                                    pass  # Continue avec la commande suivante
-            
-            _LOGGER.error("❌ Échec: aucune commande n'a fonctionné. Vérifiez que votre modèle est compatible.")
-            
-            _LOGGER.error("Échec: aucune solution n'a fonctionné")
-            return False
+            # L'application renvoie TRUE à ce moment car elle considère l'envoi réussi
+            # (indépendamment de si la chasse d'eau s'active, car cela sera confirmé par une notif)
+            return True
         except Exception as err:
             _LOGGER.error("Erreur lors de l'envoi de la commande: %s", err)
             self.connected = False
