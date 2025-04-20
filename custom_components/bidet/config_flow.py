@@ -72,8 +72,8 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the user step to pick discovered device."""
-        # Si l'utilisateur n'a pas encore passé l'étape d'appairage, le rediriger
-        if not user_input and not self.hass.config_entries.async_entries(DOMAIN):
+        # Si l'utilisateur n'a pas encore fourni d'input, rediriger vers l'étape d'appairage
+        if not user_input:
             return await self.async_step_pairing()
             
         if user_input is not None:
