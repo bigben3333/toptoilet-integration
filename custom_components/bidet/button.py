@@ -64,8 +64,9 @@ class BidetFlushButton(ButtonEntity):
             # Utiliser la caractéristique spécifique identifiée
             _LOGGER.info("🚽 TENTATIVE D'ACTIVATION DE LA CHASSE D'EAU")
             
-            # Tester la commande directe
-            command = bytes.fromhex("0xFF")  # Commande simple de test
+            # Commande exacte capturée lorsque l'utilisateur a activé la chasse d'eau
+            # Retrait des tirets de la valeur originale pour la rendre valide
+            command = bytes.fromhex("55AA0FA1000000120303-1E020400000034-3A".replace("-", ""))  # Commande exacte depuis l'app officielle
             
             try:
                 # Créer une notification pour l'utilisateur
