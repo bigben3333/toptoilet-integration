@@ -30,3 +30,38 @@ test_flush:
       data:
         device_id: "{{ device_id }}"
         command_type: "{{ command_type }}"
+
+test_auth:
+  alias: "Test d'authentification"
+  description: "Teste différentes variantes d'authentification pour le bidet"
+  fields:
+    device_id:
+      name: ID de l'appareil
+      description: ID de l'appareil bidet à tester
+      required: true
+      selector:
+        device:
+          integration: bidet
+    auth_variant:
+      name: Variante d'authentification
+      description: Type d'authentification à tester
+      required: true
+      default: "standard"
+      selector:
+        select:
+          options:
+            - label: "Standard (d8b673097b01)"
+              value: "standard"
+            - label: "Préfixe + contrôle + commande (d8b673097b01)"
+              value: "prefix_control"
+            - label: "Préfixe + commande simple (d8b6737b01)"
+              value: "prefix_only"
+            - label: "Préfixe inversé (27498f7b01)"
+              value: "prefix_inverted"
+            - label: "Format détecté dans nRF (55aa0fa10000...)"
+              value: "nrf_detected"
+  sequence:
+    - service: bidet.test_auth
+      data:
+        device_id: "{{ device_id }}"
+        auth_variant: "{{ auth_variant }}"

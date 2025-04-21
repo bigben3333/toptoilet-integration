@@ -60,3 +60,35 @@ test_simple:
               value: "old_format"
             - label: "Nouveau format (0x55aa00060501010001db)"
               value: "new_format"
+
+test_auth:
+  name: Tester les authentifications
+  description: >
+    Teste différentes variantes d'authentification pour communiquer avec le bidet,
+    basées sur l'analyse du code source de l'application officielle.
+  fields:
+    device_id:
+      name: ID de l'appareil
+      description: ID de l'appareil auquel envoyer la commande
+      required: true
+      selector:
+        device:
+          integration: bidet
+    auth_variant:
+      name: Variante d'authentification
+      description: Type d'authentification à tester
+      required: true
+      default: "standard"
+      selector:
+        select:
+          options:
+            - label: "Standard (d8b673097b01)"
+              value: "standard"
+            - label: "Préfixe + commande simple (d8b6737b01)"
+              value: "prefix_only"
+            - label: "Préfixe inversé (27498f7b01)"
+              value: "prefix_inverted"
+            - label: "Format détecté dans nRF (55aa0fa10000...)"
+              value: "nrf_detected"
+            - label: "Auth-challenge dynamique"
+              value: "challenge"

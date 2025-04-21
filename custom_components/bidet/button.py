@@ -64,9 +64,21 @@ class BidetFlushButton(ButtonEntity):
             # Utiliser la caractéristique spécifique identifiée
             _LOGGER.info("🚽 TENTATIVE D'ACTIVATION DE LA CHASSE D'EAU")
             
-            # Commande exacte capturée lorsque l'utilisateur a activé la chasse d'eau
-            # Retrait des tirets de la valeur originale pour la rendre valide
-            command = bytes.fromhex("55AA0FA1000000120303-1E020400000034-3A".replace("-", ""))  # Commande exacte depuis l'app officielle
+            # Implémentation du mécanisme d'authentification détecté dans l'APK
+
+            # 1. Préfixe d'authentification (valeur constante détectée dans les logs et le code source)
+            auth_prefix = "d8b673"
+            
+            # 2. Construction de la commande pour la chasse d'eau
+            cmd_flush = "7b01"  # Commande 0x7B avec valeur 0x01
+            
+            # 3. Commande complète avec authentification
+            auth_command = f"{auth_prefix}09{cmd_flush}"  # 09 semble être un byte de contrôle
+            
+            # 4. Conversion en bytes pour l'envoi
+            command = bytes.fromhex(auth_command)
+            
+            _LOGGER.info("🔐 Envoi de commande authentifiée: %s", auth_command)
             
             try:
                 # Créer une notification pour l'utilisateur

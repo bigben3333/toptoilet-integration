@@ -473,6 +473,147 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         })
     )
     
+    # Service de test des mécanismes d'authentification
+    async def handle_test_auth(call: ServiceCall) -> None:
+        """Tester différentes variantes d'authentification."""
+        _LOGGER.info("🔐 Service de test d'authentification appelé")
+        
+        device_id = call.data.get("device_id")
+        auth_variant = call.data.get("auth_variant", "standard")
+        
+        # Récupérer le coordinateur pour l'appareil
+        device_registry = hass.helpers.device_registry.async_get(hass)
+        device = device_registry.async_get(device_id)
+        
+        if not device:
+            _LOGGER.error("🔐 Appareil non trouvé: %s", device_id)
+            return
+        
+        # Trouver l'entrée de configuration correspondante
+        for identifier in device.identifiers:
+            if identifier[0] == DOMAIN:
+                entry_id = identifier[1]
+                break
+        else:
+            _LOGGER.error("🔐 Impossible de trouver l'entrée de configuration pour l'appareil %s", device_id)
+            return
+        
+        coordinator = hass.data[DOMAIN].get(entry_id)
+        if not coordinator:
+            _LOGGER.error("🔐 Coordinateur non trouvé pour l'entrée %s", entry_id)
+            return
+        
+        _LOGGER.info("🔐 Test d'authentification sur l'appareil %s (variante: %s)", device_id, auth_variant)
+        
+        try:
+            # S'assurer que nous sommes connectés
+            if not coordinator.client or not coordinator.connected:
+                if not await coordinator.connect():
+                    _LOGGER.error("🔐 Impossible de se connecter pour le test d'authentification")
+                    return
+            
+            # Activer les notifications d'abord (comme dans l'app)
+            try:
+                _LOGGER.info("🔐 Activation des notifications sur 0xFFE1")
+                await coordinator.client.start_notify(
+                    "0000ffe1-0000-1000-8000-00805f9b34fb", 
+                    coordinator._notification_handler
+                )
+            except Exception as err:
+                _LOGGER.warning("🔐 Échec de l'activation des notifications: %s", err)
+            
+            # Lire la caractéristique pour obtenir la valeur d'authentification
+            auth_value = None
+            try:
+                _LOGGER.info("🔐 Lecture de la caractéristique 0xFFE1 pour obtenir le challenge")
+                value_bytes = await coordinator.client.read_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb")
+                if value_bytes:
+                    auth_value = value_bytes.hex()
+                    _LOGGER.info("🔐 Valeur d'authentification lue: %s", auth_value)
+                await asyncio.sleep(0.5)
+            except Exception as err:
+                _LOGGER.warning("🔐 Échec de la lecture: %s", err)
+            
+            # Préparer la commande selon la variante choisie
+            command = None
+            
+            if auth_variant == "standard":
+                # Format standard: d8b673097b01
+                _LOGGER.info("🔐 Utilisation du format d'authentification standard")
+                command = bytes.fromhex("d8b673097b01")
+                
+            elif auth_variant == "prefix_only":
+                # Préfixe + commande directe: d8b6737b01
+                _LOGGER.info("🔐 Utilisation du format préfixe + commande simple")
+                command = bytes.fromhex("d8b6737b01")
+                
+            elif auth_variant == "prefix_inverted":
+                # Préfixe inversé + commande: 27498c7b01
+                _LOGGER.info("🔐 Utilisation du format préfixe inversé")
+                command = bytes.fromhex("27498c7b01")
+                
+            elif auth_variant == "nrf_detected":
+                # Format complet détecté dans nRF
+                _LOGGER.info("🔐 Utilisation du format détecté dans nRF Connect")
+                # Retirons les tirets qui sont juste des séparateurs visuels
+                command = bytes.fromhex("55aa0fa10000001203031e0204000000343a".replace("-", ""))
+                
+            elif auth_variant == "challenge":
+                # Utiliser la valeur lue comme base pour la réponse d'authentification
+                if auth_value and len(auth_value) >= 12:  # au moins 6 octets
+                    _LOGGER.info("🔐 Utilisation de l'authentification par challenge-response")
+                    # Extraire les 6 premiers octets et ajouter la commande
+                    auth_prefix = auth_value[:12]  # 6 octets = 12 caractères hex
+                    command = bytes.fromhex(f"{auth_prefix}7b01")
+                else:
+                    _LOGGER.error("🔐 Impossible d'utiliser l'authentification par challenge: valeur non disponible")
+                    return
+            
+            if command:
+                _LOGGER.info("🔐 Envoi de la commande d'authentification: %s", command.hex())
+                result = await coordinator.send_raw_command(command)
+                
+                if result:
+                    _LOGGER.info("🔐 La commande d'authentification a été envoyée avec succès")
+                    hass.components.persistent_notification.create(
+                        f"La commande d'authentification a été envoyée avec succès.\n"
+                        f"Variante: {auth_variant}\n"
+                        f"Commande: {command.hex()}\n\n"
+                        f"Vérifiez si votre bidet a réagi.",
+                        "Test d'authentification",
+                        "bidet_auth_test"
+                    )
+                else:
+                    _LOGGER.error("🔐 Échec de l'envoi de la commande d'authentification")
+                    hass.components.persistent_notification.create(
+                        f"Échec de l'envoi de la commande d'authentification.\n"
+                        f"Variante: {auth_variant}\n"
+                        f"Commande: {command.hex() if command else 'N/A'}",
+                        "Test d'authentification",
+                        "bidet_auth_test"
+                    )
+            else:
+                _LOGGER.error("🔐 Aucune commande générée pour la variante %s", auth_variant)
+                
+        except Exception as err:
+            _LOGGER.error("🔐 Erreur lors du test d'authentification: %s", err)
+            hass.components.persistent_notification.create(
+                f"Erreur lors du test d'authentification: {err}",
+                "Test d'authentification",
+                "bidet_auth_test"
+            )
+    
+    # Enregistrer le service de test d'authentification
+    hass.services.async_register(
+        DOMAIN,
+        "test_auth",
+        handle_test_auth,
+        schema=vol.Schema({
+            vol.Required("device_id"): cv.string,
+            vol.Required("auth_variant"): vol.In(["standard", "prefix_only", "prefix_inverted", "nrf_detected", "challenge"]),
+        })
+    )
+    
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
