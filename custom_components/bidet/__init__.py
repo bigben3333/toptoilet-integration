@@ -252,34 +252,37 @@ class BidetCoordinator:
                 return False
         
         try:
-            # Essayer d'abord les caractéristiques connues
-            for uuid in [OLD_CHARACTERISTIC_UUID, CHARACTERISTIC_UUID]:
-                try:
-                    _LOGGER.info("Tentative d'envoi sur %s", uuid)
-                    await self.client.write_gatt_char(uuid, command)
-                    _LOGGER.info("✓ SUCCÈS! Commande envoyée sur %s", uuid)
-                    return True
-                except Exception as err:
-                    _LOGGER.debug("Échec sur %s: %s", uuid, err)
+            # Approche adaptée aux découvertes de nRF Connect
+            # D'après les captures, nous devons d'abord activer les notifications (exact comme avant)
             
-            # Ensuite essayer toutes les caractéristiques disponibles
-            services = self.client.services
-            if services:
-                for service in services:
-                    for char in service.characteristics:
-                        if "write" in char.properties or "write-without-response" in char.properties:
-                            try:
-                                _LOGGER.info("Tentative d'envoi sur %s", char.uuid)
-                                await self.client.write_gatt_char(char.uuid, command)
-                                _LOGGER.info("✓ SUCCÈS sur %s", char.uuid)
-                                return True
-                            except Exception:
-                                pass  # Continue avec la caractéristique suivante
+            # 1. ACTIVATION DES NOTIFICATIONS
+            _LOGGER.info("🔑 1) ACTIVATION DES NOTIFICATIONS sur la caractéristique 0xFFE1")
+            try:
+                await self.client.start_notify("0000ffe1-0000-1000-8000-00805f9b34fb", self._notification_handler)
+            except Exception as err:
+                _LOGGER.warning("⚠️ Échec de l'activation des notifications: %s", err)
+                # Continuer malgré l'échec potentiel
             
-            _LOGGER.error("Échec de l'envoi de la commande brute")
-            return False
+            # 2. LIRE LA CARACTÉRISTIQUE (comme vu dans nRF)
+            _LOGGER.info("🔑 2) LECTURE de la caractéristique 0xFFE1")
+            try:
+                value = await self.client.read_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb")
+                _LOGGER.info("🔑 Valeur lue: %s", value.hex() if value else "Aucune valeur")
+            except Exception as err:
+                _LOGGER.warning("⚠️ Échec de la lecture de la caractéristique: %s", err)
+            
+            # 3. ENVOI DE LA COMMANDE avec la technique de bonding appropriée
+            _LOGGER.info("🔑 3) ÉCRITURE sur la caractéristique 0xFFE1: %s", command.hex())
+            await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", command)
+            _LOGGER.info("✓ SUCCÈS! Commande envoyée sur 0xFFE1")
+            
+            # 4. ATTENTE DE RÉPONSE
+            _LOGGER.info("🔑 4) ATTENTE de réponse éventuelle...")
+            await asyncio.sleep(1.0)
+            
+            return True
         except Exception as err:
-            _LOGGER.error("Erreur lors de l'envoi de la commande brute: %s", err)
+            _LOGGER.error("❌ Erreur lors de l'envoi de la commande: %s", err)
             return False
             
     def _calculate_checksum(self, cmd_str: str) -> str:
