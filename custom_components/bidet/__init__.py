@@ -21,7 +21,8 @@ from .const import (
     DOMAIN, PLATFORMS, SERVICE_UUID, CHARACTERISTIC_UUID, 
     OLD_SERVICE_UUID, OLD_CHARACTERISTIC_UUID, 
     SERVICE_PREPARE_PAIRING, SERVICE_TEST_COMMAND,
-    CMD_FLUSH, VAL_FLUSH_ON
+    CMD_FLUSH, VAL_FLUSH_ON, VAL_FLUSH_OFF,
+    CMD_HEADER, CMD_PROTOCOL, CMD_TRAILER
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -138,11 +139,18 @@ class BidetCoordinator:
         # - cmd: 7b (commande flush)
         # - value: 01 (valeur pour activer)
         
-        # Construction de la commande comme dans l'app (MainActivity ligne 524-525)
-        # Le checksum est calculé sur cette chaîne de base
-        cmd_base = "55aa000100" + cmd + "0001" + value 
+        # Construction de la commande en utilisant les constantes définies dans const.py
+        # Utilisation du protocole exact défini dans l'APK
+        cmd_base = CMD_HEADER + CMD_PROTOCOL + "05" + cmd + CMD_TRAILER + value
         checksum = self._calculate_checksum(cmd_base)
         full_cmd_hex = cmd_base + checksum
+        
+        # Format alternatif (ancien format, également présent dans l'app)
+        old_cmd_base = CMD_HEADER + "000105" + cmd + CMD_TRAILER + value
+        old_checksum = self._calculate_checksum(old_cmd_base)
+        old_full_cmd_hex = old_cmd_base + old_checksum
+        
+        _LOGGER.info("⚡ 3) FORMATS DE COMMANDE: Nouveau=%s, Ancien=%s", full_cmd_hex, old_full_cmd_hex)
         
         _LOGGER.info("⚡ 3) ENVOI de la commande exacte formatée comme dans l'application: %s", full_cmd_hex)
         full_cmd = bytes.fromhex(full_cmd_hex)
@@ -154,8 +162,16 @@ class BidetCoordinator:
             # elle envoie directement à la caractéristique trouvée
             _LOGGER.info("⚡ 4) ENVOI sur la caractéristique exacte de l'application: 0000ffe1-0000-1000-8000-00805f9b34fb")
             
-            # Méthode exacte utilisée par l'app
+            # Essayons les deux formats de commande l'un après l'autre
+            # D'abord le nouveau format (celui qui utilise CMD_PROTOCOL 0006)
+            _LOGGER.info("⚡ 4a) Essai avec le NOUVEAU format (0006): %s", full_cmd_hex)
             await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", full_cmd)
+            await asyncio.sleep(0.8)  # Attendre pour voir si ça fonctionne
+            
+            # Ensuite essayons l'ancien format (utilisant 0001)
+            _LOGGER.info("⚡ 4b) Essai avec l'ANCIEN format (0001): %s", old_full_cmd_hex)
+            old_full_cmd = bytes.fromhex(old_full_cmd_hex)
+            await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", old_full_cmd)
             
             # L'app attend ensuite une notification de retour, mais c'est géré par le handler
             # On attendra donc un moment pour voir si une notification arrive
