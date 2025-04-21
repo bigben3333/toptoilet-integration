@@ -58,62 +58,84 @@ class BidetFlushButton(ButtonEntity):
     
     async def async_press(self) -> None:
         """Gérer l'appui sur le bouton."""
-        # Utiliser une commande différente à chaque pression
-        self._counter = (self._counter + 1) % 10  # Augmenté pour tester plus de formats
+        # Force l'exécution des nouveaux tests
+        test_num = self.hass.states.get(f"{DOMAIN}.test_counter")
+        
+        # Si l'entité d'état n'existe pas, la créer
+        if not test_num:
+            self.hass.states.async_set(f"{DOMAIN}.test_counter", "5")
+            current_test = 5
+        else:
+            # Récupérer la valeur actuelle et l'incrémenter
+            try:
+                current_test = int(test_num.state)
+                current_test = (current_test + 1) % 11  # 0-10
+                if current_test == 0:  # Éviter le test #0, commencer à 1
+                    current_test = 1
+            except ValueError:
+                current_test = 5  # Valeur par défaut = test des commandes spéciales
+            
+            # Mettre à jour l'état
+            self.hass.states.async_set(f"{DOMAIN}.test_counter", str(current_test))
+        
+        _LOGGER.info("👆 EXÉCUTION du TEST #%s", current_test)
         
         try:
-            if self._counter == 0:
-                # Commande standard avec tous les extras
-                _LOGGER.info("👆 TEST #1: Commande standard complète (avec notifications, auth, etc.)")
-                result = await self.coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
-            elif self._counter == 1:
-                # Commande simplifiée
-                _LOGGER.info("👆 TEST #2: Commande simplifiée (7b 01)")
-                result = await self.coordinator.send_raw_command(b'\x7b\x01')
-            elif self._counter == 2:
-                # Ancien format complet
-                _LOGGER.info("👆 TEST #3: Ancien format complet (55aa00010...)")
-                result = await self.coordinator.send_raw_command(b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1')
-            elif self._counter == 3:
-                # Nouveau format complet
-                _LOGGER.info("👆 TEST #4: Nouveau format complet (55aa00060...)")
-                result = await self.coordinator.send_raw_command(b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb')
-            elif self._counter == 4:
-                # Format simple 1 byte
-                _LOGGER.info("👆 TEST #5: Commande ultra simplifiée (01)")
-                result = await self.coordinator.send_raw_command(b'\x01')
-            elif self._counter == 5:
+            # TESTS DE COMMANDES SPÉCIALES (FORCE)
+            if current_test == 6:
                 # Variation avec un préfixe d'authentification
-                _LOGGER.info("👆 TEST #6: Commande avec préfixe 0xD8B673 (d8b673097b01)")
-                result = await self.coordinator.send_raw_command(bytes.fromhex("d8b673097b01")) 
-            elif self._counter == 6:
+                _LOGGER.info("👆 TEST #6: Commande avec préfixe d'authentification (d8b673097b01)")
+                result = await self.coordinator.send_raw_command(bytes.fromhex("d8b673097b01"))
+            elif current_test == 7:
                 # Commande avec préfixe et xor
                 _LOGGER.info("👆 TEST #7: Commande avec préfixe XOR (27498cf67b01)")
                 result = await self.coordinator.send_raw_command(bytes.fromhex("27498cf67b01"))
-            elif self._counter == 7:
+            elif current_test == 8:
                 # Format AT (commun pour certains appareils Bluetooth)
                 _LOGGER.info("👆 TEST #8: Format AT (AT+FLUSH)")
                 result = await self.coordinator.send_raw_command(b'AT+FLUSH')
-            elif self._counter == 8:
+            elif current_test == 9:
                 # Format simple mais avec header
                 _LOGGER.info("👆 TEST #9: Format simple avec header 55AA (55AA7B01)")
                 result = await self.coordinator.send_raw_command(bytes.fromhex("55AA7B01"))
-            else:
+            elif current_test == 10:
                 # Format juste avec le header
                 _LOGGER.info("👆 TEST #10: Header uniquement (55AA)")
                 result = await self.coordinator.send_raw_command(bytes.fromhex("55AA"))
             
-            _LOGGER.info("👆 Résultat du test #%s: %s", self._counter + 1, "Succès" if result else "Échec")
+            # TESTS CLASSIQUES
+            elif current_test == 1:
+                # Commande standard avec tous les extras
+                _LOGGER.info("👆 TEST #1: Commande standard complète (avec notifications, auth, etc.)")
+                result = await self.coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
+            elif current_test == 2:
+                # Commande simplifiée
+                _LOGGER.info("👆 TEST #2: Commande simplifiée (7b 01)")
+                result = await self.coordinator.send_raw_command(b'\x7b\x01')
+            elif current_test == 3:
+                # Ancien format complet
+                _LOGGER.info("👆 TEST #3: Ancien format complet (55aa00010...)")
+                result = await self.coordinator.send_raw_command(b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1')
+            elif current_test == 4:
+                # Nouveau format complet
+                _LOGGER.info("👆 TEST #4: Nouveau format complet (55aa00060...)")
+                result = await self.coordinator.send_raw_command(b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb')
+            elif current_test == 5:
+                # Format simple 1 byte
+                _LOGGER.info("👆 TEST #5: Commande ultra simplifiée (01)")
+                result = await self.coordinator.send_raw_command(b'\x01')
+            
+            _LOGGER.info("👆 Résultat du test #%s: %s", current_test, "Succès" if result else "Échec")
             
             # Notification temporaire pour informer l'utilisateur
             from homeassistant.components import persistent_notification
             persistent_notification.create(
                 self.hass,
-                f"Test #{self._counter + 1} envoyé avec succès. "
+                f"Test #{current_test} envoyé avec succès. "
                 f"Vérifiez si votre bidet a réagi. "
                 f"Appuyez à nouveau pour essayer un format différent.",
                 "Test du Bidet WC",
-                f"bidet_test_{self._counter}"
+                f"bidet_test_{current_test}"
             )
         except Exception as err:
             _LOGGER.error("👆 Erreur lors de l'envoi de la commande: %s", err)
