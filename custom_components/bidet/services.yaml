@@ -31,7 +31,52 @@ test_command:
             - "flush"
             - "old_format"
             - "new_format"
+            - "legacy_s0"
             - "raw"
+    target_char:
+      name: Caractéristique cible
+      description: Choisir la caractéristique GATT d'écriture (auto, FFF1, FFE1, ou les deux)
+      required: false
+      default: "auto"
+      selector:
+        select:
+          options:
+            - label: "Automatique (écriture sur write_char_uuid)"
+              value: "auto"
+            - label: "Forcer FFF1 (0000fff1-0000-1000-8000-00805f9b34fb)"
+              value: "fff1"
+            - label: "Forcer FFE1 (0000ffe1-0000-1000-8000-00805f9b34fb)"
+              value: "ffe1"
+            - label: "Essayer FFF1 puis FFE1 (both)"
+              value: "both"
+    cmd:
+      name: Commande (cmd) en hex
+      description: Code commande (ex: 7b pour flush) utilisé par new_format/old_format
+      required: false
+      example: "7b"
+      selector:
+        text:
+    value:
+      name: Valeur (value) en hex
+      description: Valeur associée (ex: 01 pour ON) utilisée par new_format/old_format
+      required: false
+      example: "01"
+      selector:
+        text:
+    s0_type:
+      name: S0 Type (hex)
+      description: Type (1 octet en hex) pour legacy_s0 (format 'aaaa')
+      required: false
+      example: "01"
+      selector:
+        text:
+    s0_dp:
+      name: S0 DP (hex)
+      description: Données DP en hex pour legacy_s0 (concaténées, sans espaces)
+      required: false
+      example: "0101"
+      selector:
+        text:
     raw_command:
       name: Commande brute (hex)
       description: Commande brute en format hexadécimal (sans espaces)

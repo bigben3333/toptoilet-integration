@@ -253,15 +253,30 @@ class BidetCoordinator:
 
             for cu in candidates:
                 try:
-                    _LOGGER.info("⚡ 4a) Essai (char=%s) NOUVEAU format (0006): %s", cu, full_cmd.hex())
-                    await self.client.write_gatt_char(cu, full_cmd, response=False)
-                    await asyncio.sleep(0.3)
-                    # Répéter une seconde fois comme le font certaines apps IoT
-                    await self.client.write_gatt_char(cu, full_cmd, response=False)
-                    await asyncio.sleep(0.5)
-                    _LOGGER.info("⚡ 4b) Essai (char=%s) ANCIEN format (0001): %s", cu, old_full_cmd.hex())
-                    await self.client.write_gatt_char(cu, old_full_cmd, response=False)
-                    await asyncio.sleep(0.3)
+                    if cu == OLD_CHARACTERISTIC_UUID or self.write_char_uuid == OLD_CHARACTERISTIC_UUID:
+                        # Priorité ANCIEN protocole sur modèles FFE1: impulsion ON->OFF->ON
+                        _LOGGER.info("⚡ 4a) Priorité ANCIEN format (0001) sur %s: %s", cu, old_full_cmd.hex())
+                        await self.client.write_gatt_char(cu, old_full_cmd, response=False)
+                        await asyncio.sleep(0.35)
+                        # Certains firmwares exigent une bascule rapide
+                        old_off_cmd = self._build_old_frame(cmd, VAL_FLUSH_OFF)
+                        _LOGGER.info("⚡ 4a') Impulsion OFF (0001) sur %s: %s", cu, old_off_cmd.hex())
+                        await self.client.write_gatt_char(cu, old_off_cmd, response=False)
+                        await asyncio.sleep(0.35)
+                        # Renvoi ON
+                        _LOGGER.info("⚡ 4a'') Renvoi ON (0001) sur %s: %s", cu, old_full_cmd.hex())
+                        await self.client.write_gatt_char(cu, old_full_cmd, response=False)
+                        await asyncio.sleep(0.35)
+                    else:
+                        _LOGGER.info("⚡ 4a) Essai (char=%s) NOUVEAU format (0006): %s", cu, full_cmd.hex())
+                        await self.client.write_gatt_char(cu, full_cmd, response=False)
+                        await asyncio.sleep(0.3)
+                        # Répéter une seconde fois comme le font certaines apps IoT
+                        await self.client.write_gatt_char(cu, full_cmd, response=False)
+                        await asyncio.sleep(0.5)
+                        _LOGGER.info("⚡ 4b) Essai (char=%s) ANCIEN format (0001): %s", cu, old_full_cmd.hex())
+                        await self.client.write_gatt_char(cu, old_full_cmd, response=False)
+                        await asyncio.sleep(0.3)
                 except Exception as err:
                     _LOGGER.debug("⚠️ Échec d'écriture sur %s: %s", cu, err)
             
@@ -380,6 +395,51 @@ class BidetCoordinator:
             _LOGGER.error("❌ Erreur lors de l'envoi de la commande: %s", err)
             return False
             
+    async def send_raw_to_char(self, command: bytes, char_uuid: str) -> bool:
+        """Envoyer une commande brute au bidet en ciblant explicitement une caractéristique d'écriture."""
+        _LOGGER.info("Tentative d'envoi (char forcée=%s): %s", char_uuid, command.hex())
+        
+        # S'assurer que nous sommes connectés
+        if not self.client or not self.connected:
+            try:
+                if not await self.connect():
+                    _LOGGER.error("Impossible de se connecter pour envoyer la commande (char forcée)")
+                    return False
+            except Exception as err:
+                _LOGGER.error("Erreur lors de la reconnexion: %s", err)
+                return False
+        
+        try:
+            # Activer les notifications si pas déjà fait
+            if not self.notify_char_uuid:
+                await self._select_characteristics()
+            try:
+                await self.client.start_notify(self.notify_char_uuid, self._notification_handler)
+            except Exception as err:
+                _LOGGER.debug("Notify optionnelle échouée (%s): %s", self.notify_char_uuid, err)
+            
+            # Écriture sur la caractéristique ciblée
+            _LOGGER.info("Écriture sur %s: %s", char_uuid, command.hex())
+            await self.client.write_gatt_char(char_uuid, command, response=False)
+            await asyncio.sleep(0.5)
+            return True
+        except Exception as err:
+            _LOGGER.error("Erreur lors de l'envoi sur %s: %s", char_uuid, err)
+            return False
+
+    def _build_legacy_s0(self, type_hex: str, dp_hex: str) -> bytes:
+        """Construire la trame S0 'legacy' de la lib historique:
+        Format: 'aaaa' + <len> + <type> + <dp> + '0101'
+        Où len = nb_octets(<type> + <dp> + 0101)
+        """
+        type_hex = (type_hex or "").lower()
+        dp_hex = (dp_hex or "").lower()
+        # Longueur en octets: 1 (type) + len(dp) + 2 (0101)
+        length = 1 + len(bytes.fromhex(dp_hex)) + 2
+        length_hex = format(length, "02x")
+        payload_hex = f"aaaa{length_hex}{type_hex}{dp_hex}0101"
+        return bytes.fromhex(payload_hex)
+
     def _build_frame(self, protocol_hex: str, cmd_hex: str, value_hex: str) -> bytes:
         """Construire une trame 55aa avec longueur dynamique et checksum (H0) comme l'app."""
         # Normaliser
@@ -462,6 +522,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         device_id = call.data.get("device_id")
         command_type = call.data.get("command_type")
         raw_command = call.data.get("raw_command")
+        target_char = call.data.get("target_char", "auto").lower()
+        cmd_hex = call.data.get("cmd")
+        value_hex = call.data.get("value")
+        s0_type = call.data.get("s0_type")
+        s0_dp = call.data.get("s0_dp")
         
         # Récupérer le device_id et trouver le coordinateur correspondant
         device_registry = hass.helpers.device_registry.async_get(hass)
@@ -496,21 +561,97 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 result = await coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
             elif command_type == "old_format":
                 # Force l'ancien format (généré dynamiquement via builder S0)
-                command = coordinator._build_old_frame(CMD_FLUSH, VAL_FLUSH_ON)
-                _LOGGER.info("🔍 Envoi commande ancien format (dyn): %s", command.hex())
-                result = await coordinator.send_raw_command(command)
+                cmd_use = (cmd_hex or CMD_FLUSH)
+                val_use = (value_hex or VAL_FLUSH_ON)
+                command = coordinator._build_old_frame(cmd_use, val_use)
+                _LOGGER.info("🔍 Ancien format (dyn) cmd=%s val=%s: %s", cmd_use, val_use, command.hex())
+                if target_char == "auto":
+                    result = await coordinator.send_raw_command(command)
+                else:
+                    result = False
+                    candidates = []
+                    if target_char == "fff1":
+                        candidates = [CHARACTERISTIC_UUID]
+                    elif target_char == "ffe1":
+                        candidates = [OLD_CHARACTERISTIC_UUID]
+                    elif target_char == "both":
+                        candidates = [CHARACTERISTIC_UUID, OLD_CHARACTERISTIC_UUID]
+                    else:
+                        candidates = [coordinator.write_char_uuid or CHARACTERISTIC_UUID]
+                    for cu in candidates:
+                        ok = await coordinator.send_raw_to_char(command, cu)
+                        result = result or ok
             elif command_type == "new_format":
                 # Force le nouveau format (généré dynamiquement via builder T0)
-                command = coordinator._build_new_frame(CMD_FLUSH, VAL_FLUSH_ON)
-                _LOGGER.info("🔍 Envoi commande nouveau format (dyn): %s", command.hex())
-                result = await coordinator.send_raw_command(command)
+                cmd_use = (cmd_hex or CMD_FLUSH)
+                val_use = (value_hex or VAL_FLUSH_ON)
+                command = coordinator._build_new_frame(cmd_use, val_use)
+                _LOGGER.info("🔍 Nouveau format (dyn) cmd=%s val=%s: %s", cmd_use, val_use, command.hex())
+                if target_char == "auto":
+                    result = await coordinator.send_raw_command(command)
+                else:
+                    result = False
+                    candidates = []
+                    if target_char == "fff1":
+                        candidates = [CHARACTERISTIC_UUID]
+                    elif target_char == "ffe1":
+                        candidates = [OLD_CHARACTERISTIC_UUID]
+                    elif target_char == "both":
+                        candidates = [CHARACTERISTIC_UUID, OLD_CHARACTERISTIC_UUID]
+                    else:
+                        candidates = [coordinator.write_char_uuid or CHARACTERISTIC_UUID]
+                    for cu in candidates:
+                        ok = await coordinator.send_raw_to_char(command, cu)
+                        result = result or ok
+            elif command_type == "legacy_s0":
+                # Envoi du format legacy 'aaaa' + len + type + dp + 0101
+                if not s0_type or not s0_dp:
+                    _LOGGER.error("🔍 legacy_s0 nécessite s0_type et s0_dp (hex)")
+                else:
+                    try:
+                        command = coordinator._build_legacy_s0(s0_type, s0_dp)
+                        _LOGGER.info("🔍 Legacy S0 (type=%s dp=%s): %s", s0_type, s0_dp, command.hex())
+                        # Legacy supposé écrit sur FFE1
+                        if target_char == "auto":
+                            result = await coordinator.send_raw_to_char(command, OLD_CHARACTERISTIC_UUID)
+                        else:
+                            result = False
+                            candidates = []
+                            if target_char == "fff1":
+                                candidates = [CHARACTERISTIC_UUID]
+                            elif target_char == "ffe1":
+                                candidates = [OLD_CHARACTERISTIC_UUID]
+                            elif target_char == "both":
+                                candidates = [CHARACTERISTIC_UUID, OLD_CHARACTERISTIC_UUID]
+                            else:
+                                candidates = [coordinator.write_char_uuid or OLD_CHARACTERISTIC_UUID]
+                            for cu in candidates:
+                                ok = await coordinator.send_raw_to_char(command, cu)
+                                result = result or ok
+                    except ValueError as err:
+                        _LOGGER.error("🔍 Paramètres legacy_s0 invalides (hex requis): %s", err)
             elif command_type == "raw" and raw_command:
                 # Commande brute
                 try:
                     # Convertir la chaîne hex en bytes
                     command = bytes.fromhex(raw_command)
-                    _LOGGER.info("🔍 Envoi commande brute: %s", command.hex())
-                    result = await coordinator.send_raw_command(command)
+                    _LOGGER.info("🔍 Commande brute: %s", command.hex())
+                    if target_char == "auto":
+                        result = await coordinator.send_raw_command(command)
+                    else:
+                        result = False
+                        candidates = []
+                        if target_char == "fff1":
+                            candidates = [CHARACTERISTIC_UUID]
+                        elif target_char == "ffe1":
+                            candidates = [OLD_CHARACTERISTIC_UUID]
+                        elif target_char == "both":
+                            candidates = [CHARACTERISTIC_UUID, OLD_CHARACTERISTIC_UUID]
+                        else:
+                            candidates = [coordinator.write_char_uuid or CHARACTERISTIC_UUID]
+                        for cu in candidates:
+                            ok = await coordinator.send_raw_to_char(command, cu)
+                            result = result or ok
                 except ValueError as err:
                     _LOGGER.error("🔍 Format hexadécimal invalide: %s", err)
             
@@ -550,13 +691,17 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 result = await coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
             elif command_type == "old_format":
                 # Force l'ancien format (généré dynamiquement via builder S0)
-                command = coordinator._build_old_frame(CMD_FLUSH, VAL_FLUSH_ON)
-                _LOGGER.info("🔎 Envoi commande ancien format (dyn): %s", command.hex())
+                cmd_use = CMD_FLUSH
+                val_use = VAL_FLUSH_ON
+                command = coordinator._build_old_frame(cmd_use, val_use)
+                _LOGGER.info("🔎 Envoi commande ancien format (dyn) cmd=%s val=%s: %s", cmd_use, val_use, command.hex())
                 result = await coordinator.send_raw_command(command)
             elif command_type == "new_format":
                 # Force le nouveau format (généré dynamiquement via builder T0)
-                command = coordinator._build_new_frame(CMD_FLUSH, VAL_FLUSH_ON)
-                _LOGGER.info("🔎 Envoi commande nouveau format (dyn): %s", command.hex())
+                cmd_use = CMD_FLUSH
+                val_use = VAL_FLUSH_ON
+                command = coordinator._build_new_frame(cmd_use, val_use)
+                _LOGGER.info("🔎 Envoi commande nouveau format (dyn) cmd=%s val=%s: %s", cmd_use, val_use, command.hex())
                 result = await coordinator.send_raw_command(command)
             
             message = "✅ La commande a été envoyée avec succès" if result else "❌ Échec de l'envoi de la commande"
@@ -590,8 +735,13 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         handle_test_command,
         schema=vol.Schema({
             vol.Required("device_id"): cv.string,
-            vol.Required("command_type"): vol.In(["flush", "old_format", "new_format", "raw"]),
-            vol.Optional("raw_command"): cv.string,
+            vol.Required("command_type"): vol.In(["flush", "old_format", "new_format", "legacy_s0", "raw"]),
+            vol.Optional("target_char", default="auto"): vol.In(["auto", "fff1", "ffe1", "both"]),
+            vol.Optional("cmd"): cv.string,        # hex string for cmd (e.g. "7b")
+            vol.Optional("value"): cv.string,      # hex string for value (e.g. "01")
+            vol.Optional("s0_type"): cv.string,    # hex 1-byte type for legacy_s0
+            vol.Optional("s0_dp"): cv.string,      # hex dp payload for legacy_s0
+            vol.Optional("raw_command"): cv.string # raw hex payload when command_type="raw"
         })
     )
     
