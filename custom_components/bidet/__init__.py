@@ -116,19 +116,26 @@ class BidetCoordinator:
             preferred = CHARACTERISTIC_UUID.lower()
             fallback = OLD_CHARACTERISTIC_UUID.lower()
 
-            if preferred in char_uuids:
-                self.write_char_uuid = CHARACTERISTIC_UUID
-                self.notify_char_uuid = CHARACTERISTIC_UUID
-                _LOGGER.info("✅ Caractéristique FFF1 détectée et sélectionnée pour write/notify")
-            elif fallback in char_uuids:
-                self.write_char_uuid = OLD_CHARACTERISTIC_UUID
-                self.notify_char_uuid = OLD_CHARACTERISTIC_UUID
-                _LOGGER.info("✅ Caractéristique FFE1 détectée et sélectionnée pour write/notify")
+            # Sélection séparée: écrire de préférence sur FFF1 (app officielle), notifier de préférence sur FFE1
+            if preferred in char_uuids or fallback in char_uuids:
+                # WRITE UUID
+                if preferred in char_uuids:
+                    self.write_char_uuid = CHARACTERISTIC_UUID
+                else:
+                    self.write_char_uuid = OLD_CHARACTERISTIC_UUID
+
+                # NOTIFY UUID
+                if fallback in char_uuids:
+                    self.notify_char_uuid = OLD_CHARACTERISTIC_UUID
+                else:
+                    self.notify_char_uuid = CHARACTERISTIC_UUID
+
+                _LOGGER.info("✅ Sélection des caractéristiques -> write: %s, notify: %s", self.write_char_uuid, self.notify_char_uuid)
             else:
-                # Par défaut, tenter nouveau puis ancien à l'usage
+                # Par défaut, tenter write sur FFF1 et notify sur FFE1
                 self.write_char_uuid = CHARACTERISTIC_UUID
                 self.notify_char_uuid = OLD_CHARACTERISTIC_UUID
-                _LOGGER.warning("⚠️ Caractéristiques non listées via services; tentative FFF1/FFE1 à l'usage")
+                _LOGGER.warning("⚠️ Caractéristiques non listées via services; tentative write FFF1 / notify FFE1")
         except Exception as err:
             _LOGGER.warning("⚠️ Impossible de déterminer les caractéristiques: %s", err)
             if not self.write_char_uuid:
@@ -231,13 +238,32 @@ class BidetCoordinator:
             
             # Essayons les deux formats de commande l'un après l'autre
             # D'abord le nouveau format (celui qui utilise CMD_PROTOCOL 0006)
-            _LOGGER.info("⚡ 4a) Essai avec le NOUVEAU format (0006): %s", full_cmd.hex())
-            await self.client.write_gatt_char(self.write_char_uuid, full_cmd, response=False)
-            await asyncio.sleep(0.8)  # Attendre pour voir si ça fonctionne
-            
-            # Ensuite essayons l'ancien format (utilisant 0001)
-            _LOGGER.info("⚡ 4b) Essai avec l'ANCIEN format (0001): %s", old_full_cmd.hex())
-            await self.client.write_gatt_char(self.write_char_uuid, old_full_cmd, response=False)
+            # Essais multi-caractéristiques (FFF1 et FFE1) et répétitions pour fiabiliser
+            candidates = []
+            try:
+                # Toujours commencer par la write_char_uuid choisie
+                candidates.append(self.write_char_uuid)
+                # Tenter ensuite FFF1 puis FFE1 si différents
+                if CHARACTERISTIC_UUID not in candidates:
+                    candidates.append(CHARACTERISTIC_UUID)
+                if OLD_CHARACTERISTIC_UUID not in candidates:
+                    candidates.append(OLD_CHARACTERISTIC_UUID)
+            except Exception:
+                candidates = [self.write_char_uuid]
+
+            for cu in candidates:
+                try:
+                    _LOGGER.info("⚡ 4a) Essai (char=%s) NOUVEAU format (0006): %s", cu, full_cmd.hex())
+                    await self.client.write_gatt_char(cu, full_cmd, response=False)
+                    await asyncio.sleep(0.3)
+                    # Répéter une seconde fois comme le font certaines apps IoT
+                    await self.client.write_gatt_char(cu, full_cmd, response=False)
+                    await asyncio.sleep(0.5)
+                    _LOGGER.info("⚡ 4b) Essai (char=%s) ANCIEN format (0001): %s", cu, old_full_cmd.hex())
+                    await self.client.write_gatt_char(cu, old_full_cmd, response=False)
+                    await asyncio.sleep(0.3)
+                except Exception as err:
+                    _LOGGER.debug("⚠️ Échec d'écriture sur %s: %s", cu, err)
             
             # L'app attend ensuite une notification de retour, mais c'est géré par le handler
             # On attendra donc un moment pour voir si une notification arrive
@@ -364,8 +390,9 @@ class BidetCoordinator:
         # Données: <cmd> + 0001 + <value>
         data_hex = f"{cmd_hex}0001{value_hex}"
         data_len = len(bytes.fromhex(data_hex))
-        # Longueur observée = data_len + 1 (ex: 1+2+1=4 -> 5 -> 0x05)
-        length_hex = format(data_len + 1, "02x")
+        # Longueur selon T0 (smali): len = (dp bytes) + 3
+        # Exemple flush: 1 (cmd) + 2 (0001) + 1 (val) = 4 -> 4 + 3 = 7 (0x07)
+        length_hex = format(data_len + 3, "02x")
 
         base_hex = f"55aa{protocol_hex}{length_hex}{data_hex}"
         checksum_hex = self._calculate_checksum(base_hex)
@@ -468,14 +495,14 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 _LOGGER.info("🔍 Envoi commande flush")
                 result = await coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
             elif command_type == "old_format":
-                # Force l'ancien format
-                command = b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1'
-                _LOGGER.info("🔍 Envoi commande ancien format: %s", command.hex())
+                # Force l'ancien format (généré dynamiquement via builder S0)
+                command = coordinator._build_old_frame(CMD_FLUSH, VAL_FLUSH_ON)
+                _LOGGER.info("🔍 Envoi commande ancien format (dyn): %s", command.hex())
                 result = await coordinator.send_raw_command(command)
             elif command_type == "new_format":
-                # Force le nouveau format
-                command = b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb'
-                _LOGGER.info("🔍 Envoi commande nouveau format: %s", command.hex())
+                # Force le nouveau format (généré dynamiquement via builder T0)
+                command = coordinator._build_new_frame(CMD_FLUSH, VAL_FLUSH_ON)
+                _LOGGER.info("🔍 Envoi commande nouveau format (dyn): %s", command.hex())
                 result = await coordinator.send_raw_command(command)
             elif command_type == "raw" and raw_command:
                 # Commande brute
@@ -522,14 +549,14 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 _LOGGER.info("🔎 Envoi commande flush")
                 result = await coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
             elif command_type == "old_format":
-                # Force l'ancien format
-                command = b'\x55\xaa\x00\x01\x05\x7b\x00\x01\x01\xa1'
-                _LOGGER.info("🔎 Envoi commande ancien format: %s", command.hex())
+                # Force l'ancien format (généré dynamiquement via builder S0)
+                command = coordinator._build_old_frame(CMD_FLUSH, VAL_FLUSH_ON)
+                _LOGGER.info("🔎 Envoi commande ancien format (dyn): %s", command.hex())
                 result = await coordinator.send_raw_command(command)
             elif command_type == "new_format":
-                # Force le nouveau format
-                command = b'\x55\xaa\x00\x06\x05\x7b\x00\x01\x01\xdb'
-                _LOGGER.info("🔎 Envoi commande nouveau format: %s", command.hex())
+                # Force le nouveau format (généré dynamiquement via builder T0)
+                command = coordinator._build_new_frame(CMD_FLUSH, VAL_FLUSH_ON)
+                _LOGGER.info("🔎 Envoi commande nouveau format (dyn): %s", command.hex())
                 result = await coordinator.send_raw_command(command)
             
             message = "✅ La commande a été envoyée avec succès" if result else "❌ Échec de l'envoi de la commande"
