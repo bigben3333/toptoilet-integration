@@ -39,6 +39,8 @@ class BidetCoordinator:
         self.connected = False
         self._disconnect_callbacks = []
         self.last_notification_data = None  # Stockage de la dernière notification reçue
+        self.write_char_uuid = None
+        self.notify_char_uuid = None
 
     async def connect(self) -> bool:
         """Établir la connexion avec le bidet."""
@@ -93,6 +95,47 @@ class BidetCoordinator:
         if callback in self._disconnect_callbacks:
             self._disconnect_callbacks.remove(callback)
 
+    async def _select_characteristics(self) -> None:
+        """Détecter et sélectionner la bonne caractéristique (FFF1 nouveau, FFE1 ancien)."""
+        try:
+            # Essayer d'utiliser le cache des services si disponible
+            try:
+                services = await self.client.get_services()
+            except Exception:
+                services = getattr(self.client, "services", None)
+
+            char_uuids = set()
+            if services:
+                for service in services:
+                    for char in getattr(service, "characteristics", []):
+                        try:
+                            char_uuids.add(str(char.uuid).lower())
+                        except Exception:
+                            pass
+
+            preferred = CHARACTERISTIC_UUID.lower()
+            fallback = OLD_CHARACTERISTIC_UUID.lower()
+
+            if preferred in char_uuids:
+                self.write_char_uuid = CHARACTERISTIC_UUID
+                self.notify_char_uuid = CHARACTERISTIC_UUID
+                _LOGGER.info("✅ Caractéristique FFF1 détectée et sélectionnée pour write/notify")
+            elif fallback in char_uuids:
+                self.write_char_uuid = OLD_CHARACTERISTIC_UUID
+                self.notify_char_uuid = OLD_CHARACTERISTIC_UUID
+                _LOGGER.info("✅ Caractéristique FFE1 détectée et sélectionnée pour write/notify")
+            else:
+                # Par défaut, tenter nouveau puis ancien à l'usage
+                self.write_char_uuid = CHARACTERISTIC_UUID
+                self.notify_char_uuid = OLD_CHARACTERISTIC_UUID
+                _LOGGER.warning("⚠️ Caractéristiques non listées via services; tentative FFF1/FFE1 à l'usage")
+        except Exception as err:
+            _LOGGER.warning("⚠️ Impossible de déterminer les caractéristiques: %s", err)
+            if not self.write_char_uuid:
+                self.write_char_uuid = CHARACTERISTIC_UUID
+            if not self.notify_char_uuid:
+                self.notify_char_uuid = OLD_CHARACTERISTIC_UUID
+
     async def send_command(self, cmd: str, value: str) -> bool:
         """Envoyer une commande au bidet."""
         _LOGGER.info("⭐ Tentative d'activation de la chasse d'eau avec séquence exacte de l'application")
@@ -107,6 +150,10 @@ class BidetCoordinator:
                 _LOGGER.error("Erreur lors de la reconnexion: %s", err)
                 return False
         
+        # Déterminer la caractéristique si nécessaire (préférence FFF1, sinon FFE1)
+        if not self.write_char_uuid or not self.notify_char_uuid:
+            await self._select_characteristics()
+
         # 1. ÉTAPE CRUCIALE - S'abonner aux notifications AVANT d'envoyer des commandes
         # C'est exactement ce que fait l'application originale
         try:
@@ -114,7 +161,7 @@ class BidetCoordinator:
             
             # L'application utilise la caractéristique FFE1 pour les notifications
             await self.client.start_notify(
-                "0000ffe1-0000-1000-8000-00805f9b34fb", 
+                self.notify_char_uuid, 
                 self._notification_handler
             )
             _LOGGER.info("⚡ Notifications activées avec succès - Le bidet peut maintenant recevoir des commandes")
@@ -123,7 +170,7 @@ class BidetCoordinator:
             # L'app originale fait d'abord une lecture après s'être abonnée
             try:
                 _LOGGER.info("⚡ 2) LECTURE de l'état initial comme dans l'application originale")
-                value_bytes = await self.client.read_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb")
+                value_bytes = await self.client.read_gatt_char(self.notify_char_uuid)
                 _LOGGER.info("⚡ Valeur actuelle: %s", value_bytes.hex() if value_bytes else "Aucune valeur")
                 await asyncio.sleep(0.3)
             except Exception as err:
@@ -160,18 +207,18 @@ class BidetCoordinator:
             # L'application utilise toujours la caractéristique FFE1
             # En analysant MainActivity.java, l'app ne fait pas d'essais-erreurs,
             # elle envoie directement à la caractéristique trouvée
-            _LOGGER.info("⚡ 4) ENVOI sur la caractéristique exacte de l'application: 0000ffe1-0000-1000-8000-00805f9b34fb")
+            _LOGGER.info("⚡ 4) ENVOI sur la caractéristique: %s", self.write_char_uuid)
             
             # Essayons les deux formats de commande l'un après l'autre
             # D'abord le nouveau format (celui qui utilise CMD_PROTOCOL 0006)
             _LOGGER.info("⚡ 4a) Essai avec le NOUVEAU format (0006): %s", full_cmd_hex)
-            await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", full_cmd)
+            await self.client.write_gatt_char(self.write_char_uuid, full_cmd)
             await asyncio.sleep(0.8)  # Attendre pour voir si ça fonctionne
             
             # Ensuite essayons l'ancien format (utilisant 0001)
             _LOGGER.info("⚡ 4b) Essai avec l'ANCIEN format (0001): %s", old_full_cmd_hex)
             old_full_cmd = bytes.fromhex(old_full_cmd_hex)
-            await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", old_full_cmd)
+            await self.client.write_gatt_char(self.write_char_uuid, old_full_cmd)
             
             # L'app attend ensuite une notification de retour, mais c'est géré par le handler
             # On attendra donc un moment pour voir si une notification arrive
@@ -207,7 +254,7 @@ class BidetCoordinator:
                 for i, auth_resp in enumerate(auth_responses):
                     try:
                         _LOGGER.info("🔐 Essai de réponse d'authentification #%d: %s", i+1, auth_resp.hex())
-                        await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", auth_resp)
+                        await self.client.write_gatt_char(self.write_char_uuid, auth_resp)
                         await asyncio.sleep(0.5)  # Attendre entre les commandes
                     except Exception as err:
                         _LOGGER.warning("🔐 Échec de la réponse d'authentification #%d: %s", i+1, err)
@@ -253,27 +300,30 @@ class BidetCoordinator:
         
         try:
             # Approche adaptée aux découvertes de nRF Connect
+            # Sélection des caractéristiques si nécessaire (préférence FFF1, sinon FFE1)
+            if not self.write_char_uuid or not self.notify_char_uuid:
+                await self._select_characteristics()
             # D'après les captures, nous devons d'abord activer les notifications (exact comme avant)
             
             # 1. ACTIVATION DES NOTIFICATIONS
-            _LOGGER.info("🔑 1) ACTIVATION DES NOTIFICATIONS sur la caractéristique 0xFFE1")
+            _LOGGER.info("🔑 1) ACTIVATION DES NOTIFICATIONS sur la caractéristique %s", self.notify_char_uuid)
             try:
-                await self.client.start_notify("0000ffe1-0000-1000-8000-00805f9b34fb", self._notification_handler)
+                await self.client.start_notify(self.notify_char_uuid, self._notification_handler)
             except Exception as err:
                 _LOGGER.warning("⚠️ Échec de l'activation des notifications: %s", err)
                 # Continuer malgré l'échec potentiel
             
             # 2. LIRE LA CARACTÉRISTIQUE (comme vu dans nRF)
-            _LOGGER.info("🔑 2) LECTURE de la caractéristique 0xFFE1")
+            _LOGGER.info("🔑 2) LECTURE de la caractéristique %s", self.notify_char_uuid)
             try:
-                value = await self.client.read_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb")
+                value = await self.client.read_gatt_char(self.notify_char_uuid)
                 _LOGGER.info("🔑 Valeur lue: %s", value.hex() if value else "Aucune valeur")
             except Exception as err:
                 _LOGGER.warning("⚠️ Échec de la lecture de la caractéristique: %s", err)
             
             # 3. ENVOI DE LA COMMANDE avec la technique de bonding appropriée
-            _LOGGER.info("🔑 3) ÉCRITURE sur la caractéristique 0xFFE1: %s", command.hex())
-            await self.client.write_gatt_char("0000ffe1-0000-1000-8000-00805f9b34fb", command)
+            _LOGGER.info("🔑 3) ÉCRITURE sur la caractéristique %s: %s", self.write_char_uuid, command.hex())
+            await self.client.write_gatt_char(self.write_char_uuid, command)
             _LOGGER.info("✓ SUCCÈS! Commande envoyée sur 0xFFE1")
             
             # 4. ATTENTE DE RÉPONSE

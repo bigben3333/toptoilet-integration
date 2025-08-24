@@ -58,70 +58,45 @@ class BidetFlushButton(ButtonEntity):
     async def async_press(self) -> None:
         """Gérer l'appui sur le bouton."""
         from homeassistant.components import persistent_notification
-        
-        try:
-            # NOUVELLE APPROCHE BASÉE SUR LES CAPTURES nRF Connect
-            # Utiliser la caractéristique spécifique identifiée
-            _LOGGER.info("🚽 TENTATIVE D'ACTIVATION DE LA CHASSE D'EAU")
-            
-            # Implémentation du mécanisme d'authentification détecté dans l'APK
 
-            # 1. Préfixe d'authentification (valeur constante détectée dans les logs et le code source)
-            auth_prefix = "d8b673"
-            
-            # 2. Construction de la commande pour la chasse d'eau
-            cmd_flush = "7b01"  # Commande 0x7B avec valeur 0x01
-            
-            # 3. Commande complète avec authentification
-            auth_command = f"{auth_prefix}09{cmd_flush}"  # 09 semble être un byte de contrôle
-            
-            # 4. Conversion en bytes pour l'envoi
-            command = bytes.fromhex(auth_command)
-            
-            _LOGGER.info("🔐 Envoi de commande authentifiée: %s", auth_command)
-            
-            try:
-                # Créer une notification pour l'utilisateur
+        _LOGGER.info("🚽 TENTATIVE D'ACTIVATION DE LA CHASSE D'EAU (via send_command)")
+        try:
+            # Notifier le début de l'action
+            persistent_notification.create(
+                self.hass,
+                "Tentative d'activation de la chasse d'eau via l'intégration BLE.",
+                "Test du Bidet WC",
+                "bidet_test_command"
+            )
+
+            # Utiliser le chemin standard de l'intégration (sélection dynamique FFF1/FFE1 + encodage 55aa + checksum)
+            result = await self.coordinator.send_command(CMD_FLUSH, VAL_FLUSH_ON)
+
+            if result:
+                _LOGGER.info("✅ Commande flush envoyée avec succès")
                 persistent_notification.create(
                     self.hass,
-                    "Tentative d'activation de la chasse d'eau. "
-                    "Ce test utilise un protocole simplifié basé sur les captures nRF Connect.",
-                    "Test du Bidet WC",
-                    "bidet_test_command"
+                    "La commande flush a été envoyée avec succès. Vérifiez la réaction du bidet.",
+                    "Commande envoyée",
+                    "bidet_command_result"
                 )
-                
-                # Envoi de la commande adaptée au profil BLE découvert
-                result = await self.coordinator.send_raw_command(command)
-                
-                if result:
-                    _LOGGER.info("✅ Commande envoyée avec succès")
-                    persistent_notification.create(
-                        self.hass,
-                        "La commande a été envoyée avec succès à l'appareil Bluetooth. "
-                        "Vérifiez si votre bidet a réagi.",
-                        "Commande envoyée",
-                        "bidet_command_result"
-                    )
-                else:
-                    _LOGGER.error("❌ Échec de l'envoi de la commande")
-                    persistent_notification.create(
-                        self.hass,
-                        "Échec de l'envoi de la commande au bidet. "
-                        "Veuillez vérifier la connexion Bluetooth et réessayer.",
-                        "Erreur d'envoi",
-                        "bidet_command_error"
-                    )
-            except Exception as err:
-                _LOGGER.error("❌ Erreur lors de l'envoi de la commande: %s", err)
+            else:
+                _LOGGER.error("❌ Échec de l'envoi de la commande flush")
                 persistent_notification.create(
                     self.hass,
-                    f"Erreur lors de l'envoi de la commande: {err}",
+                    "Échec de l'envoi de la commande flush. Vérifiez la connexion Bluetooth et réessayez.",
                     "Erreur d'envoi",
                     "bidet_command_error"
                 )
-                
         except Exception as err:
-            _LOGGER.error("❌ Erreur générale: %s", err)
+            _LOGGER.error("❌ Erreur lors de l'envoi de la commande flush: %s", err)
+            from homeassistant.components import persistent_notification as pn
+            pn.create(
+                self.hass,
+                f"Erreur lors de l'envoi de la commande flush: {err}",
+                "Erreur d'envoi",
+                "bidet_command_error"
+            )
     
     def _handle_disconnect(self) -> None:
         """Gérer la déconnexion du bidet."""
