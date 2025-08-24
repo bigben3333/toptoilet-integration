@@ -12,7 +12,7 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import CONF_ADDRESS, CONF_NAME
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, SERVICE_UUID
+from .const import DOMAIN, SERVICE_UUID, OLD_SERVICE_UUID
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,7 +33,11 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
 
-        # Accepte tous les appareils Bluetooth pour plus de flexibilité
+        # Accepter uniquement les appareils exposant nos services (FFF0 nouveaux, FFE0 anciens)
+        service_uuids = {u.lower() for u in (discovery_info.service_uuids or [])}
+        if SERVICE_UUID.lower() not in service_uuids and OLD_SERVICE_UUID.lower() not in service_uuids:
+            return self.async_abort(reason="not_supported")
+
         device = discovery_info.device
         name = device.name or discovery_info.address
         return self.async_create_entry(
@@ -67,7 +71,11 @@ class BidetConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if address in current_addresses:
                 continue
 
-            # Ajouter tous les appareils Bluetooth, pas seulement ceux avec l'UUID spécifique
+            # Filtrer sur les UUIDs de service attendus (FFF0 nouveaux, FFE0 anciens)
+            service_uuids = {u.lower() for u in (discovery_info.service_uuids or [])}
+            if SERVICE_UUID.lower() not in service_uuids and OLD_SERVICE_UUID.lower() not in service_uuids:
+                continue
+
             device = discovery_info.device
             self._discovered_devices[address] = device
 

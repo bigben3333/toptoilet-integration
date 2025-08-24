@@ -175,6 +175,34 @@ class BidetCoordinator:
                 await asyncio.sleep(0.3)
             except Exception as err:
                 _LOGGER.info("⚡ Lecture non critique impossible: %s", err)
+
+            # 2a. PING initial (optionnel, comme dans l'app)
+            try:
+                await self._maybe_send_ping()
+            except Exception as err:
+                _LOGGER.debug("Ignorer échec ping initial: %s", err)
+
+            # 2b. PRÉ-AUTHENTIFICATION basée sur le challenge (avant l'envoi de la commande)
+            try:
+                auth_cmds = []
+                chal = self.last_notification_data
+                if chal:
+                    _LOGGER.info("🔐 Challenge lu: %s", chal)
+                    if chal.startswith("d8b673"):
+                        # Variante standard observée dans l'app: d8 b6 73 09 + 7b 01
+                        auth_cmds.append(bytes.fromhex("d8b673097b01"))
+                        # Variante préfixe simple: d8 b6 73 + 7b 01
+                        auth_cmds.append(bytes.fromhex("d8b6737b01"))
+                    # Variante écho des 6 premiers octets du challenge + 7b01
+                    if len(chal) >= 12:
+                        auth_cmds.append(bytes.fromhex(chal[:12] + "7b01"))
+
+                for auth in auth_cmds:
+                    _LOGGER.info("🔐 Pré-auth: écriture %s sur %s", auth.hex(), self.write_char_uuid)
+                    await self.client.write_gatt_char(self.write_char_uuid, auth, response=False)
+                    await asyncio.sleep(0.4)
+            except Exception as err:
+                _LOGGER.warning("🔐 Échec de la pré-authentification: %s", err)
                 
         except Exception as err:
             _LOGGER.warning("⚡ Échec de l'abonnement aux notifications: %s", err)
@@ -188,19 +216,11 @@ class BidetCoordinator:
         
         # Construction de la commande en utilisant les constantes définies dans const.py
         # Utilisation du protocole exact défini dans l'APK
-        cmd_base = CMD_HEADER + CMD_PROTOCOL + "05" + cmd + CMD_TRAILER + value
-        checksum = self._calculate_checksum(cmd_base)
-        full_cmd_hex = cmd_base + checksum
+        full_cmd = self._build_new_frame(cmd, value)
+        old_full_cmd = self._build_old_frame(cmd, value)
+        _LOGGER.info("⚡ 3) FORMATS DE COMMANDE: Nouveau=%s, Ancien=%s", full_cmd.hex(), old_full_cmd.hex())
         
-        # Format alternatif (ancien format, également présent dans l'app)
-        old_cmd_base = CMD_HEADER + "000105" + cmd + CMD_TRAILER + value
-        old_checksum = self._calculate_checksum(old_cmd_base)
-        old_full_cmd_hex = old_cmd_base + old_checksum
-        
-        _LOGGER.info("⚡ 3) FORMATS DE COMMANDE: Nouveau=%s, Ancien=%s", full_cmd_hex, old_full_cmd_hex)
-        
-        _LOGGER.info("⚡ 3) ENVOI de la commande exacte formatée comme dans l'application: %s", full_cmd_hex)
-        full_cmd = bytes.fromhex(full_cmd_hex)
+        _LOGGER.info("⚡ 3) ENVOI de la commande exacte formatée comme dans l'application: %s", full_cmd.hex())
         
         # 4. ENVOI DE LA COMMANDE - Exactement comme l'app le fait
         try:
@@ -211,14 +231,13 @@ class BidetCoordinator:
             
             # Essayons les deux formats de commande l'un après l'autre
             # D'abord le nouveau format (celui qui utilise CMD_PROTOCOL 0006)
-            _LOGGER.info("⚡ 4a) Essai avec le NOUVEAU format (0006): %s", full_cmd_hex)
-            await self.client.write_gatt_char(self.write_char_uuid, full_cmd)
+            _LOGGER.info("⚡ 4a) Essai avec le NOUVEAU format (0006): %s", full_cmd.hex())
+            await self.client.write_gatt_char(self.write_char_uuid, full_cmd, response=False)
             await asyncio.sleep(0.8)  # Attendre pour voir si ça fonctionne
             
             # Ensuite essayons l'ancien format (utilisant 0001)
-            _LOGGER.info("⚡ 4b) Essai avec l'ANCIEN format (0001): %s", old_full_cmd_hex)
-            old_full_cmd = bytes.fromhex(old_full_cmd_hex)
-            await self.client.write_gatt_char(self.write_char_uuid, old_full_cmd)
+            _LOGGER.info("⚡ 4b) Essai avec l'ANCIEN format (0001): %s", old_full_cmd.hex())
+            await self.client.write_gatt_char(self.write_char_uuid, old_full_cmd, response=False)
             
             # L'app attend ensuite une notification de retour, mais c'est géré par le handler
             # On attendra donc un moment pour voir si une notification arrive
@@ -254,7 +273,7 @@ class BidetCoordinator:
                 for i, auth_resp in enumerate(auth_responses):
                     try:
                         _LOGGER.info("🔐 Essai de réponse d'authentification #%d: %s", i+1, auth_resp.hex())
-                        await self.client.write_gatt_char(self.write_char_uuid, auth_resp)
+                        await self.client.write_gatt_char(self.write_char_uuid, auth_resp, response=False)
                         await asyncio.sleep(0.5)  # Attendre entre les commandes
                     except Exception as err:
                         _LOGGER.warning("🔐 Échec de la réponse d'authentification #%d: %s", i+1, err)
@@ -323,7 +342,7 @@ class BidetCoordinator:
             
             # 3. ENVOI DE LA COMMANDE avec la technique de bonding appropriée
             _LOGGER.info("🔑 3) ÉCRITURE sur la caractéristique %s: %s", self.write_char_uuid, command.hex())
-            await self.client.write_gatt_char(self.write_char_uuid, command)
+            await self.client.write_gatt_char(self.write_char_uuid, command, response=False)
             _LOGGER.info("✓ SUCCÈS! Commande envoyée sur 0xFFE1")
             
             # 4. ATTENTE DE RÉPONSE
@@ -335,6 +354,42 @@ class BidetCoordinator:
             _LOGGER.error("❌ Erreur lors de l'envoi de la commande: %s", err)
             return False
             
+    def _build_frame(self, protocol_hex: str, cmd_hex: str, value_hex: str) -> bytes:
+        """Construire une trame 55aa avec longueur dynamique et checksum (H0) comme l'app."""
+        # Normaliser
+        protocol_hex = protocol_hex.lower()
+        cmd_hex = cmd_hex.lower()
+        value_hex = value_hex.lower()
+
+        # Données: <cmd> + 0001 + <value>
+        data_hex = f"{cmd_hex}0001{value_hex}"
+        data_len = len(bytes.fromhex(data_hex))
+        # Longueur observée = data_len + 1 (ex: 1+2+1=4 -> 5 -> 0x05)
+        length_hex = format(data_len + 1, "02x")
+
+        base_hex = f"55aa{protocol_hex}{length_hex}{data_hex}"
+        checksum_hex = self._calculate_checksum(base_hex)
+        return bytes.fromhex(base_hex + checksum_hex)
+
+    def _build_new_frame(self, cmd_hex: str, value_hex: str) -> bytes:
+        """Nouveau protocole (0006)."""
+        return self._build_frame("0006", cmd_hex, value_hex)
+
+    def _build_old_frame(self, cmd_hex: str, value_hex: str) -> bytes:
+        """Ancien protocole (0001)."""
+        return self._build_frame("0001", cmd_hex, value_hex)
+
+    async def _maybe_send_ping(self) -> None:
+        """Envoyer le ping 'Q' de l'app: 55aa00000000ff (keepalive/handshake)."""
+        try:
+            ping_base = "55aa00000000"
+            ping = bytes.fromhex(ping_base + self._calculate_checksum(ping_base))
+            _LOGGER.info("🔄 Ping initial (Q): %s", ping.hex())
+            await self.client.write_gatt_char(self.write_char_uuid, ping, response=False)
+            await asyncio.sleep(0.2)
+        except Exception as err:
+            _LOGGER.debug("Ping initial ignoré: %s", err)
+
     def _calculate_checksum(self, cmd_str: str) -> str:
         """Calculer le checksum selon la méthode du bidet."""
         # Divise la commande en paires de caractères (octets en hex)
